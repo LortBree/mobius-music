@@ -1,0 +1,96 @@
+name: macOS Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ hashFiles('app/mobius/pubspec.lock') }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install CocoaPods
+        run: brew install cocoapods
+
+      - name: Resolve Flutter packages
+        working-directory: app/mobius
+        run: flutter pub get
+
+      - name: Build Rust FFI release library
+        run: cargo build -p offline-player-ffi --release
+
+      - name: Build Flutter macOS release app
+        working-directory: app/mobius
+        run: flutter build macos --release
+
+      - name: Package app
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          app_path="app/mobius/build/macos/Build/Products/Release/mobius.app"
+          archive_path="dist/Mobius-${VERSION}-macos-${ARCH}.zip"
+          test -d "${app_path}"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${archive_path}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mobius-${{ github.ref_name }}-macos-${{ matrix.arch }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Mobius ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            macOS release builds for Apple silicon (arm64) and Intel (x86_64).
+
+            These builds are not signed with an Apple Developer ID certificate and are not notarized. macOS may show a security warning the first time the app is opened.
+          files: dist/*.zip
