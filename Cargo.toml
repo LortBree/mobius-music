@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+  "rust/app-core",
+  "rust/audio-core",
+  "rust/decoder",
+  "rust/metadata",
+  "rust/db",
+  "rust/platform-macos",
+  "rust/ffi",
+]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

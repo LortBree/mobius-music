@@ -1,0 +1,9 @@
+[package]
+name = "offline-player-audio-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rtrb = "0.4.0"
+thiserror = "2"

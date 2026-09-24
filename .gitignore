@@ -1,0 +1,77 @@
+# =========================
+# Mobius
+# =========================
+
+# ---------- OS ----------
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ---------- IDE ----------
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# ---------- Flutter / Dart ----------
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+.dart_tool/
+build/
+
+# Flutter generated platform files that may be regenerated
+.flutter_tool_state
+
+# ---------- Android ----------
+**/android/.gradle/
+**/android/local.properties
+**/android/.idea/
+**/android/app/build/
+**/android/build/
+**/android/.cxx/
+**/android/captures/
+**/android/gradle-app.setting
+
+# ---------- Rust ----------
+**/target/
+
+# Rust/Cargo local files
+# Cargo.lock is committed for reproducible application builds.
+
+# ---------- Generated native binaries ----------
+*.dylib
+*.so
+*.dll
+*.a
+*.lib
+
+# ---------- Logs / temp ----------
+*.log
+*.tmp
+*.temp
+
+# ---------- Local environment ----------
+.env
+.env.*
+!.env.example
+
+# ---------- Flutter generated files ----------
+**/ios/Flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/linux/flutter/ephemeral/
+**/windows/flutter/ephemeral/
+**/web/flutter_service_worker.js
+
+# ---------- Local audio/library data ----------
+# Do NOT commit personal music files or local SQLite databases.
+*.db
+*.db-shm
+*.db-wal
+
+# ---------- Test artifacts ----------
+coverage/
