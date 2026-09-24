@@ -1,0 +1,16 @@
+[package]
+name = "offline-player-app-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+offline-player-audio-core = { path = "../audio-core" }
+offline-player-db = { path = "../db" }
+offline-player-metadata = { path = "../metadata" }
+thiserror = "2"
+rusqlite = "0.38.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+offline-player-decoder = { path = "../decoder" }
+offline-player-platform-macos = { path = "../platform-macos" }

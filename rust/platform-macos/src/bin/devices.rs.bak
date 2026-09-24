@@ -1,0 +1,58 @@
+use offline_player_platform_macos::list_devices;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let devices = list_devices()?;
+
+    println!(
+        "Found {} CoreAudio device(s)\n",
+        devices.len()
+    );
+
+    for (device_index, device) in devices.iter().enumerate() {
+        println!("Device #{}", device_index);
+        println!("  ID             : {}", device.id);
+        println!(
+            "  Output streams : {}",
+            device.output_streams.len()
+        );
+
+        for stream in &device.output_streams {
+            let format = &stream.physical_format;
+
+            println!("  Stream {}", stream.id);
+            println!(
+                "    Current      : {:.0} Hz / {} ch / {} bits",
+                format.mSampleRate,
+                format.mChannelsPerFrame,
+                format.mBitsPerChannel
+            );
+
+            println!("    Format ID    : 0x{:08X}", format.mFormatID);
+            println!(
+                "    Flags        : 0x{:08X}",
+                format.mFormatFlags
+            );
+
+            println!(
+                "    Available physical formats: {}",
+                stream.available_physical_formats.len()
+            );
+
+            for item in &stream.available_physical_formats {
+                let format = &item.mFormat;
+
+                println!(
+                    "      {:.0}..{:.0} Hz | {} ch | {} bits",
+                    item.mSampleRateRange.mMinimum,
+                    item.mSampleRateRange.mMaximum,
+                    format.mChannelsPerFrame,
+                    format.mBitsPerChannel
+                );
+            }
+        }
+
+        println!();
+    }
+
+    Ok(())
+}
