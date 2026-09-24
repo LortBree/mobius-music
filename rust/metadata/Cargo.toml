@@ -1,9 +1,0 @@
-[package]
-name = "offline-player-metadata"
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-[dependencies]
-lofty = "0.25.1"
-thiserror = "2"
