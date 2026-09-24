@@ -36,7 +36,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install CocoaPods
-        run: sudo port install CocoaPods
+        run: |
+          gem install cocoapods -v 1.16.2 --no-document
+          pod --version
 
       - name: Resolve Flutter packages
         working-directory: app/mobius
