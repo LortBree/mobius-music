@@ -9,6 +9,7 @@
 
 # ---------- IDE ----------
 .idea/
+.history/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
@@ -54,6 +55,9 @@ build/
 *.log
 *.tmp
 *.temp
+*.bak
+*.orig
+*.swp
 
 # ---------- Local environment ----------
 .env
@@ -72,6 +76,12 @@ build/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # ---------- Test artifacts ----------
 coverage/
