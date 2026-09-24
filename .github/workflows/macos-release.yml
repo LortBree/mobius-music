@@ -36,7 +36,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install CocoaPods
-        run: brew install cocoapods
+        run: sudo port install CocoaPods
 
       - name: Resolve Flutter packages
         working-directory: app/mobius
