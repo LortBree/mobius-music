@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../app/mobius_app.dart' show ThemeModeController;
 import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../../library/data/ffi_library_repository.dart';
@@ -14,11 +15,13 @@ class SettingsPage extends StatefulWidget {
     required this.playerController,
     required this.repository,
     required this.onLibraryChanged,
+    required this.themeController,
   });
 
   final PlayerController playerController;
   final FfiLibraryRepository repository;
   final VoidCallback onLibraryChanged;
+  final ThemeModeController themeController;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -74,9 +77,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ? List<double>.from(_flatGains)
         : storedGains.map<double>((value) {
             final parsed = double.tryParse(value) ?? 0;
-            return parsed.isFinite
-                ? parsed.clamp(-12.0, 12.0).toDouble()
-                : 0.0;
+            return parsed.isFinite ? parsed.clamp(-12.0, 12.0).toDouble() : 0.0;
           }).toList();
     final enabled = preferences.getBool(_equalizerEnabledKey) ?? false;
     if (!mounted) return;
@@ -90,8 +91,10 @@ class _SettingsPageState extends State<SettingsPage> {
 
   String _presetFor(List<double> gains) {
     for (final entry in _equalizerPresets.entries) {
-      if (List.generate(10, (index) => (entry.value[index] - gains[index]).abs())
-          .every((difference) => difference < 0.01)) {
+      if (List.generate(
+        10,
+        (index) => (entry.value[index] - gains[index]).abs(),
+      ).every((difference) => difference < 0.01)) {
         return entry.key;
       }
     }
@@ -133,8 +136,8 @@ class _SettingsPageState extends State<SettingsPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: MobiusColors.panel,
-        border: Border.all(color: MobiusColors.border),
+        color: MobiusColors.panelOf(context),
+        border: Border.all(color: MobiusColors.borderOf(context)),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Column(
@@ -142,14 +145,14 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Equalizer',
                       style: TextStyle(
-                        color: MobiusColors.text,
+                        color: MobiusColors.textOf(context),
                         fontSize: 15,
                         fontWeight: FontWeight.w500,
                       ),
@@ -157,7 +160,10 @@ class _SettingsPageState extends State<SettingsPage> {
                     SizedBox(height: 5),
                     Text(
                       'Adjust ten frequency bands while listening.',
-                      style: TextStyle(color: MobiusColors.textDim, fontSize: 12),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -166,14 +172,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 value: _selectedEqualizerPreset == 'Custom'
                     ? 'Custom'
                     : _selectedEqualizerPreset,
-                dropdownColor: MobiusColors.panel,
+                dropdownColor: MobiusColors.panelOf(context),
                 underline: const SizedBox.shrink(),
                 items: [
                   ..._equalizerPresets.keys.map(
-                    (preset) => DropdownMenuItem(
-                      value: preset,
-                      child: Text(preset),
-                    ),
+                    (preset) =>
+                        DropdownMenuItem(value: preset, child: Text(preset)),
                   ),
                   if (_selectedEqualizerPreset == 'Custom')
                     const DropdownMenuItem(
@@ -192,7 +196,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(width: 8),
               Switch.adaptive(
                 value: _equalizerEnabled,
-                activeTrackColor: MobiusColors.purple,
+                activeTrackColor: MobiusColors.accentOf(context),
                 onChanged: (enabled) => _updateEqualizer(enabled: enabled),
               ),
             ],
@@ -214,8 +218,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       children: [
                         Text(
                           '${_equalizerGains[index].toStringAsFixed(1)} dB',
-                          style: const TextStyle(
-                            color: MobiusColors.textDim,
+                          style: TextStyle(
+                            color: MobiusColors.textDimOf(context),
                             fontSize: 10,
                           ),
                         ),
@@ -232,14 +236,21 @@ class _SettingsPageState extends State<SettingsPage> {
                                 min: -12,
                                 max: 12,
                                 divisions: 48,
-                                activeColor: MobiusColors.purple,
+                                activeColor: MobiusColors.accentOf(context),
                                 onChanged: (value) {
-                                  final gains = List<double>.from(_equalizerGains);
+                                  final gains = List<double>.from(
+                                    _equalizerGains,
+                                  );
                                   gains[index] = value;
-                                  _updateEqualizer(gains: gains, persist: false);
+                                  _updateEqualizer(
+                                    gains: gains,
+                                    persist: false,
+                                  );
                                 },
                                 onChangeEnd: (value) {
-                                  final gains = List<double>.from(_equalizerGains);
+                                  final gains = List<double>.from(
+                                    _equalizerGains,
+                                  );
                                   gains[index] = value;
                                   _updateEqualizer(gains: gains);
                                 },
@@ -252,8 +263,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           frequency >= 1000
                               ? '${(frequency / 1000).toStringAsFixed(frequency % 1000 == 0 ? 0 : 1)}k'
                               : '${frequency.toInt()}',
-                          style: const TextStyle(
-                            color: MobiusColors.textDim,
+                          style: TextStyle(
+                            color: MobiusColors.textDimOf(context),
                             fontSize: 10,
                             fontFamily: 'monospace',
                           ),
@@ -367,7 +378,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
+          backgroundColor: MobiusColors.panelOf(context),
           title: const Text('Remove music folder?'),
           content: Text(
             'Remove this folder from Mobius library sources?\n\n$folder',
@@ -380,8 +391,8 @@ class _SettingsPageState extends State<SettingsPage> {
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF8A63D2),
-                foregroundColor: const Color(0xFFFAFAFA),
+                backgroundColor: MobiusColors.accentOf(context),
+                foregroundColor: MobiusColors.onAccentOf(context),
                 elevation: 0,
               ),
               child: const Text('Remove'),
@@ -536,7 +547,8 @@ class _SettingsPageState extends State<SettingsPage> {
   String _outputModeDescriptionFor(OfflinePlayerOutputMode mode) {
     switch (mode) {
       case OfflinePlayerOutputMode.auto:
-        return 'Follow the source sample rate when the device supports it.';
+        return 'Play at the highest rate the output device supports, matching '
+            'the source when possible (bit-perfect).';
       case OfflinePlayerOutputMode.khz44_1:
         return 'Use 44.1 kHz as the maximum output rate. Higher-rate sources are resampled.';
       case OfflinePlayerOutputMode.khz48:
@@ -565,8 +577,8 @@ class _SettingsPageState extends State<SettingsPage> {
       constraints: const BoxConstraints(minHeight: 72),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
-        color: MobiusColors.panel,
-        border: Border.all(color: MobiusColors.border),
+        color: MobiusColors.panelOf(context),
+        border: Border.all(color: MobiusColors.borderOf(context)),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -604,7 +616,6 @@ class _SettingsPageState extends State<SettingsPage> {
       OfflinePlayerOutputMode.auto,
       OfflinePlayerOutputMode.khz44_1,
       OfflinePlayerOutputMode.khz48,
-      OfflinePlayerOutputMode.khz96,
     ];
 
     return SizedBox(
@@ -613,13 +624,13 @@ class _SettingsPageState extends State<SettingsPage> {
         child: DropdownButton<OfflinePlayerOutputMode>(
           value: _outputMode,
           isExpanded: true,
-          dropdownColor: const Color(0xFF1A1A1A),
+          dropdownColor: MobiusColors.panelOf(context),
           borderRadius: BorderRadius.circular(8),
-          icon: const Icon(
+          icon: Icon(
             Icons.keyboard_arrow_down_rounded,
-            color: Color(0xFF9A9A9A),
+            color: MobiusColors.textDimOf(context),
           ),
-          style: const TextStyle(color: Color(0xFFEDEDED), fontSize: 14),
+          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 14),
           items: [
             for (final mode in modes)
               DropdownMenuItem<OfflinePlayerOutputMode>(
@@ -637,16 +648,57 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _themeSelector() {
+    const modes = <ThemeMode>[
+      ThemeMode.dark,
+      ThemeMode.light,
+      ThemeMode.system,
+    ];
+
+    String label(ThemeMode mode) => switch (mode) {
+      ThemeMode.dark => 'Dark',
+      ThemeMode.light => 'Light (sunrise)',
+      ThemeMode.system => 'System',
+    };
+
+    return SizedBox(
+      width: 170,
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<ThemeMode>(
+          value: widget.themeController.mode,
+          isExpanded: true,
+          dropdownColor: MobiusColors.panelOf(context),
+          borderRadius: BorderRadius.circular(8),
+          icon: Icon(
+            Icons.keyboard_arrow_down_rounded,
+            color: MobiusColors.textDimOf(context),
+          ),
+          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 14),
+          items: [
+            for (final mode in modes)
+              DropdownMenuItem<ThemeMode>(
+                value: mode,
+                child: Text(label(mode)),
+              ),
+          ],
+          onChanged: (mode) {
+            if (mode != null) widget.themeController.setMode(mode);
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildOutputModeDescription() {
     return Padding(
       padding: const EdgeInsets.only(top: 12, left: 20, right: 20),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
+          Icon(
             Icons.info_outline_rounded,
             size: 17,
-            color: Color(0xFF9A9A9A),
+            color: MobiusColors.textDimOf(context),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -668,18 +720,18 @@ class _SettingsPageState extends State<SettingsPage> {
         constraints: const BoxConstraints(minHeight: 72),
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: MobiusColors.panel,
-          border: Border.all(color: MobiusColors.border),
+          color: MobiusColors.panelOf(context),
+          border: Border.all(color: MobiusColors.borderOf(context)),
           borderRadius: BorderRadius.circular(10),
         ),
-        child: const Align(
+        child: Align(
           alignment: Alignment.centerLeft,
           child: SizedBox(
             width: 18,
             height: 18,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: Color(0xFF8A63D2),
+              color: MobiusColors.accentOf(context),
             ),
           ),
         ),
@@ -693,13 +745,16 @@ class _SettingsPageState extends State<SettingsPage> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A1A1A),
-              border: Border.all(color: const Color(0xFF2A2A2A)),
+              color: MobiusColors.panelOf(context),
+              border: Border.all(color: MobiusColors.borderOf(context)),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Text(
+            child: Text(
               'No music folders configured.',
-              style: TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+              style: TextStyle(
+                color: MobiusColors.textDimOf(context),
+                fontSize: 13,
+              ),
             ),
           )
         else
@@ -712,11 +767,11 @@ class _SettingsPageState extends State<SettingsPage> {
           alignment: Alignment.centerLeft,
           child: OutlinedButton.icon(
             onPressed: _addMusicFolder,
-            icon: const Icon(Icons.add_rounded, size: 18),
+            icon: Icon(Icons.add_rounded, size: 18),
             label: const Text('Add Music Folder'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFEDEDED),
-              side: const BorderSide(color: Color(0xFF3A3A3A)),
+              foregroundColor: MobiusColors.textOf(context),
+              side: BorderSide(color: MobiusColors.borderOf(context)),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
@@ -733,21 +788,25 @@ class _SettingsPageState extends State<SettingsPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        border: Border.all(color: const Color(0xFF2A2A2A)),
+        color: MobiusColors.panelOf(context),
+        border: Border.all(color: MobiusColors.borderOf(context)),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
-          const Icon(Icons.folder_outlined, size: 19, color: Color(0xFF9A9A9A)),
+          Icon(
+            Icons.folder_outlined,
+            size: 19,
+            color: MobiusColors.textDimOf(context),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               folder,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFEDEDED),
+              style: TextStyle(
+                color: MobiusColors.textOf(context),
                 fontSize: 13,
                 fontFamily: 'monospace',
               ),
@@ -757,8 +816,8 @@ class _SettingsPageState extends State<SettingsPage> {
           IconButton(
             tooltip: 'Remove folder',
             onPressed: _scanning ? null : () => _removeMusicFolder(folder),
-            icon: const Icon(Icons.close_rounded, size: 18),
-            color: const Color(0xFF9A9A9A),
+            icon: Icon(Icons.close_rounded, size: 18),
+            color: MobiusColors.textDimOf(context),
           ),
         ],
       ),
@@ -770,20 +829,20 @@ class _SettingsPageState extends State<SettingsPage> {
       constraints: const BoxConstraints(minHeight: 72),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        border: Border.all(color: const Color(0xFF2A2A2A)),
+        color: MobiusColors.panelOf(context),
+        border: Border.all(color: MobiusColors.borderOf(context)),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   'Scan library',
                   style: TextStyle(
-                    color: Color(0xFFEDEDED),
+                    color: MobiusColors.textOf(context),
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
                   ),
@@ -792,7 +851,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Text(
                   'Scan all configured music folders for new and changed tracks.',
                   style: TextStyle(
-                    color: Color(0xFF9A9A9A),
+                    color: MobiusColors.textDimOf(context),
                     fontSize: 13,
                     height: 1.35,
                   ),
@@ -804,8 +863,8 @@ class _SettingsPageState extends State<SettingsPage> {
           FilledButton(
             onPressed: _scanning ? null : _scanLibrary,
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF8A63D2),
-              foregroundColor: const Color(0xFFFAFAFA),
+              backgroundColor: MobiusColors.accentOf(context),
+              foregroundColor: MobiusColors.onAccentOf(context),
               elevation: 0,
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
               shape: RoundedRectangleBorder(
@@ -813,12 +872,12 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
             child: _scanning
-                ? const SizedBox(
+                ? SizedBox(
                     width: 17,
                     height: 17,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Color(0xFFFAFAFA),
+                      color: MobiusColors.onAccentOf(context),
                     ),
                   )
                 : const Text('Scan Library'),
@@ -832,11 +891,11 @@ class _SettingsPageState extends State<SettingsPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        border: Border.all(color: const Color(0xFF2A2A2A)),
+        color: MobiusColors.panelOf(context),
+        border: Border.all(color: MobiusColors.borderOf(context)),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: const Row(
+      child: Row(
         children: [
           Expanded(
             child: Column(
@@ -845,7 +904,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Text(
                   'Mobius',
                   style: TextStyle(
-                    color: Color(0xFFEDEDED),
+                    color: MobiusColors.textOf(context),
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
                   ),
@@ -853,7 +912,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 SizedBox(height: 6),
                 Text(
                   'Offline hi-res music player',
-                  style: TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
+                    fontSize: 13,
+                  ),
                 ),
               ],
             ),
@@ -861,7 +923,7 @@ class _SettingsPageState extends State<SettingsPage> {
           Text(
             '1.0.0',
             style: TextStyle(
-              color: Color(0xFF9A9A9A),
+              color: MobiusColors.textDimOf(context),
               fontSize: 13,
               fontFamily: 'monospace',
             ),
@@ -887,7 +949,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontSize: 42,
                   fontWeight: FontWeight.w600,
-                  color: MobiusColors.text,
+                  color: MobiusColors.textOf(context),
                 ),
               ),
               const SizedBox(height: 8),
@@ -913,6 +975,15 @@ class _SettingsPageState extends State<SettingsPage> {
               _buildOutputModeDescription(),
               const SizedBox(height: 16),
               _buildEqualizer(),
+              const SizedBox(height: 40),
+              _sectionTitle('Appearance'),
+              const SizedBox(height: 16),
+              _settingRow(
+                title: 'Theme',
+                description:
+                    'Dark, warm sunrise light, or match the system setting.',
+                trailing: _themeSelector(),
+              ),
               const SizedBox(height: 40),
               _sectionTitle('About'),
               const SizedBox(height: 16),

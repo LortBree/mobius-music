@@ -65,6 +65,12 @@ impl PlaybackService {
         self.controller.output_mode()
     }
 
+    /// The rate the current session negotiated with the device, or `None` when
+    /// nothing is loaded. Ground truth for the native/resampled status.
+    pub fn effective_output_rate(&self) -> Option<u32> {
+        self.controller.effective_output_rate()
+    }
+
     pub fn set_output_mode(&mut self, mode: crate::PlaybackOutputMode) {
         self.controller.set_output_mode(mode);
     }

@@ -123,6 +123,10 @@ impl LibraryService {
         Ok(self.store.playback_tracks()?)
     }
 
+    pub fn playback_track_ids(&self) -> Result<Vec<i64>, LibraryServiceError> {
+        Ok(self.store.playback_track_ids()?)
+    }
+
     pub fn track_artwork(
         &self,
         track_id: i64,

@@ -1,9 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/ffi/offline_player.dart';
 import '../features/library/data/ffi_library_repository.dart';
 import 'mobius_shell.dart';
+import 'theme/mobius_theme.dart';
 import '../playback/player_controller.dart';
+
+/// Lets descendants (the Settings page) read and change the app theme mode
+/// without a state-management dependency -- consistent with the app's plain
+/// setState + constructor-injection conventions.
+class ThemeModeController {
+  const ThemeModeController({required this.mode, required this.setMode});
+
+  final ThemeMode mode;
+  final ValueChanged<ThemeMode> setMode;
+}
 
 class MobiusApp extends StatefulWidget {
   const MobiusApp({
@@ -18,18 +30,40 @@ class MobiusApp extends StatefulWidget {
 }
 
 class _MobiusAppState extends State<MobiusApp> {
+  static const String _themeModeKey = 'theme_mode_v1';
+
   late final FfiLibraryRepository _libraryRepository;
   late final PlayerController _playerController;
+
+  ThemeMode _themeMode = ThemeMode.dark;
 
   @override
   void initState() {
     super.initState();
 
-    _libraryRepository =
-        FfiLibraryRepository(widget.player);
+    _libraryRepository = FfiLibraryRepository(widget.player);
+    _playerController = PlayerController(widget.player);
 
-    _playerController =
-        PlayerController(widget.player);
+    _loadThemeMode();
+  }
+
+  Future<void> _loadThemeMode() async {
+    final preferences = await SharedPreferences.getInstance();
+    final stored = preferences.getString(_themeModeKey);
+    final mode = switch (stored) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      'system' => ThemeMode.system,
+      _ => ThemeMode.dark,
+    };
+    if (!mounted) return;
+    setState(() => _themeMode = mode);
+  }
+
+  Future<void> _setThemeMode(ThemeMode mode) async {
+    setState(() => _themeMode = mode);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_themeModeKey, mode.name);
   }
 
   @override
@@ -37,10 +71,16 @@ class _MobiusAppState extends State<MobiusApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Mobius',
-      theme: _buildTheme(),
+      theme: MobiusTheme.light(),
+      darkTheme: MobiusTheme.dark(),
+      themeMode: _themeMode,
       home: MobiusShell(
         repository: _libraryRepository,
         playerController: _playerController,
+        themeController: ThemeModeController(
+          mode: _themeMode,
+          setMode: _setThemeMode,
+        ),
       ),
     );
   }
@@ -49,56 +89,5 @@ class _MobiusAppState extends State<MobiusApp> {
   void dispose() {
     widget.player.dispose();
     super.dispose();
-  }
-
-  ThemeData _buildTheme() {
-    const background = Color(0xFF121212);
-    const surface = Color(0xFF1A1A1A);
-    const elevated = Color(0xFF2A2A2A);
-    const primary = Color(0xFF8A63D2);
-    const text = Color(0xFFEDEDED);
-    const secondaryText = Color(0xFF9A9A9A);
-
-    return ThemeData(
-      brightness: Brightness.dark,
-      scaffoldBackgroundColor: background,
-      colorScheme: const ColorScheme.dark(
-        primary: primary,
-        surface: surface,
-        onSurface: text,
-      ),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: background,
-        foregroundColor: text,
-        elevation: 0,
-      ),
-      textTheme: const TextTheme(
-        bodyLarge: TextStyle(
-          color: text,
-          fontSize: 15,
-        ),
-        bodyMedium: TextStyle(
-          color: secondaryText,
-          fontSize: 14,
-        ),
-        titleLarge: TextStyle(
-          color: text,
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      cardTheme: const CardThemeData(
-        color: surface,
-        elevation: 0,
-      ),
-      dividerTheme: const DividerThemeData(
-        color: elevated,
-        thickness: 1,
-        space: 1,
-      ),
-      iconTheme: const IconThemeData(
-        color: text,
-      ),
-    );
   }
 }

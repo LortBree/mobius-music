@@ -66,6 +66,16 @@ OfflinePlayerResult offline_player_library_track_id_at(
     int64_t *out_track_id
 );
 
+/* Copies all track ids (same order as library_track_id_at) in one call.
+ * *out_count always receives the total. Returns BUFFER_TOO_SMALL (and copies
+ * nothing) when capacity < total. out_ids may be NULL only if capacity is 0. */
+OfflinePlayerResult offline_player_library_track_ids(
+    OfflinePlayerHandle *handle,
+    int64_t *out_ids,
+    size_t capacity,
+    size_t *out_count
+);
+
 typedef struct OfflinePlayerTrackMetadata {
     int64_t track_id;
     char *title;
@@ -138,6 +148,11 @@ OfflinePlayerResult offline_player_set_output_mode(
 OfflinePlayerResult offline_player_output_mode(
     OfflinePlayerHandle *handle,
     OfflinePlayerOutputMode *out_mode
+);
+
+OfflinePlayerResult offline_player_effective_output_rate(
+    OfflinePlayerHandle *handle,
+    uint32_t *out_rate
 );
 
 OfflinePlayerResult offline_player_set_volume(

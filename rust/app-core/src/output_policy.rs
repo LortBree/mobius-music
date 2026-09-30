@@ -74,35 +74,27 @@ impl OutputPolicy {
 
         match self {
             Self::Auto => {
-                // Auto mode keeps high-resolution sources on the widely
-                // supported 44.1/48 kHz path instead of renegotiating devices
-                // at 96 kHz or above. Use native output when the source is
-                // already within that ceiling.
-                const AUTO_MAX_SAMPLE_RATE: u32 = 48_000;
-                let ceiling = source_sample_rate.min(AUTO_MAX_SAMPLE_RATE);
-                let output_sample_rate = supported_sample_rates
-                    .iter()
-                    .copied()
-                    .filter(|&rate| rate > 0 && rate <= ceiling)
-                    .max();
-
-                let Some(output_sample_rate) = output_sample_rate else {
-                    if supported_sample_rates.contains(&source_sample_rate) {
-                        return Ok(OutputPlan::Native {
-                            sample_rate: source_sample_rate,
-                        });
-                    }
-
-                    return Err(OutputPolicyError::NoSupportedRateWithoutUpsampling {
-                        source_sample_rate,
-                    });
-                };
-
-                if output_sample_rate == source_sample_rate {
+                // Auto targets the DAC's full capability: play the source at
+                // its native rate when the device supports it (bit-perfect),
+                // otherwise use the highest supported rate that does not
+                // require upsampling the source.
+                if supported_sample_rates.contains(&source_sample_rate) {
                     return Ok(OutputPlan::Native {
                         sample_rate: source_sample_rate,
                     });
                 }
+
+                let output_sample_rate = supported_sample_rates
+                    .iter()
+                    .copied()
+                    .filter(|&rate| rate > 0 && rate <= source_sample_rate)
+                    .max();
+
+                let Some(output_sample_rate) = output_sample_rate else {
+                    return Err(OutputPolicyError::NoSupportedRateWithoutUpsampling {
+                        source_sample_rate,
+                    });
+                };
 
                 Ok(OutputPlan::Resample {
                     source_sample_rate,
@@ -157,6 +149,7 @@ mod tests {
     use super::*;
 
     const MAC_BUILTIN_RATES: &[u32] = &[44_100, 48_000];
+    const DAC_RATES: &[u32] = &[44_100, 48_000, 88_200, 96_000, 176_400, 192_000, 352_800, 384_000];
 
     #[test]
     fn auto_keeps_44100_native() {
@@ -179,7 +172,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_resamples_96000_to_48000() {
+    fn auto_resamples_96000_to_48000_on_builtin() {
+        // Built-in device tops out at 48 kHz, so a 96 kHz source resamples down.
         assert_eq!(
             OutputPolicy::Auto.plan(96_000, MAC_BUILTIN_RATES),
             Ok(OutputPlan::Resample {
@@ -190,12 +184,36 @@ mod tests {
     }
 
     #[test]
-    fn auto_resamples_192000_to_48000() {
+    fn auto_keeps_96000_native_on_dac() {
+        // A DAC that supports 96 kHz plays it bit-perfect under Auto.
         assert_eq!(
-            OutputPolicy::Auto.plan(192_000, MAC_BUILTIN_RATES),
+            OutputPolicy::Auto.plan(96_000, DAC_RATES),
+            Ok(OutputPlan::Native {
+                sample_rate: 96_000
+            })
+        );
+    }
+
+    #[test]
+    fn auto_keeps_192000_native_on_dac() {
+        // Auto uses the DAC's full capability; no downsampling of 192 kHz.
+        assert_eq!(
+            OutputPolicy::Auto.plan(192_000, DAC_RATES),
+            Ok(OutputPlan::Native {
+                sample_rate: 192_000
+            })
+        );
+    }
+
+    #[test]
+    fn auto_resamples_unsupported_hi_res_down_to_highest_supported() {
+        // A source rate the DAC does not list resamples to the highest
+        // supported rate that does not upsample (256k -> 192k here).
+        assert_eq!(
+            OutputPolicy::Auto.plan(256_000, DAC_RATES),
             Ok(OutputPlan::Resample {
-                source_sample_rate: 192_000,
-                output_sample_rate: 48_000,
+                source_sample_rate: 256_000,
+                output_sample_rate: 192_000,
             })
         );
     }

@@ -339,6 +339,30 @@ impl LibraryStore {
         Ok(result)
     }
 
+    /// Track ids in the same order as [`Self::playback_tracks`], without
+    /// materialising paths/format rows. Used for library enumeration and
+    /// queue validation, where only the ids are needed.
+    pub fn playback_track_ids(&self) -> Result<Vec<i64>, LibraryStoreError> {
+        let mut statement = self.connection.prepare_cached(
+            r#"
+            SELECT t.id
+            FROM tracks AS t
+            INNER JOIN assets AS a
+                ON a.id = t.asset_id
+            ORDER BY
+                COALESCE(t.disc_number, 0),
+                t.track_number,
+                t.id
+            "#,
+        )?;
+
+        let ids = statement
+            .query_map([], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(ids)
+    }
+
     pub fn playback_tracks(&self) -> Result<Vec<PlaybackTrack>, LibraryStoreError> {
         let mut statement = self.connection.prepare(
             r#"
@@ -550,6 +574,26 @@ mod tests {
         assert_eq!(tracks[0].asset_id, 1);
         assert_eq!(tracks[0].start_frame, 0);
         assert_eq!(tracks[0].frame_count, Some(44_100));
+
+        Ok(())
+    }
+
+    #[test]
+    fn playback_track_ids_match_playback_tracks_order() -> Result<(), LibraryStoreError> {
+        let mut store = LibraryStore::open_in_memory()?;
+
+        assert!(store.playback_track_ids()?.is_empty());
+
+        store.persist_scan(&scanned_asset())?;
+
+        let expected: Vec<i64> = store
+            .playback_tracks()?
+            .iter()
+            .map(|track| track.track_id)
+            .collect();
+
+        assert_eq!(store.playback_track_ids()?, expected);
+        assert_eq!(expected, vec![1]);
 
         Ok(())
     }

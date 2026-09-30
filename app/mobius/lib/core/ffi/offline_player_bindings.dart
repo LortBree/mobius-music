@@ -86,508 +86,434 @@ typedef VersionDart = ffi.Pointer<Utf8> Function();
  * Lifecycle
  */
 
-typedef CreateNative = ffi.Int32 Function(
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<ffi.Pointer<OfflinePlayerHandle>>,
-);
+typedef CreateNative =
+    ffi.Int32 Function(
+      ffi.Pointer<Utf8>,
+      ffi.Pointer<ffi.Pointer<OfflinePlayerHandle>>,
+    );
 
-typedef CreateDart = int Function(
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<ffi.Pointer<OfflinePlayerHandle>>,
-);
+typedef CreateDart =
+    int Function(
+      ffi.Pointer<Utf8>,
+      ffi.Pointer<ffi.Pointer<OfflinePlayerHandle>>,
+    );
 
-typedef DestroyNative = ffi.Void Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef DestroyNative = ffi.Void Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef DestroyDart = void Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef DestroyDart = void Function(ffi.Pointer<OfflinePlayerHandle>);
 
 /*
  * Error
  */
 
-typedef LastErrorNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<Utf8>,
-  ffi.Uint64,
-);
+typedef LastErrorNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<Utf8>,
+      ffi.Uint64,
+    );
 
-typedef LastErrorDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<Utf8>,
-  int,
-);
+typedef LastErrorDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<Utf8>, int);
 
 /*
  * Library
  */
 
-typedef ScanDirectoryNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef ScanDirectoryNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<Utf8>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Pointer<ffi.Int64>,
+    );
 
-typedef ScanDirectoryDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<Utf8>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef ScanDirectoryDart =
+    int Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<Utf8>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Pointer<ffi.Int64>,
+    );
 
-typedef TrackCountNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef TrackCountNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int64>,
+    );
 
-typedef TrackCountDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef TrackCountDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Int64>);
 
-typedef TrackIdAtNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int64,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef TrackIdAtNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Int64,
+      ffi.Pointer<ffi.Int64>,
+    );
 
-typedef TrackIdAtDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef TrackIdAtDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int, ffi.Pointer<ffi.Int64>);
 
-typedef LibraryTrackMetadataNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int64,
-  ffi.Pointer<OfflinePlayerTrackMetadata>,
-);
+typedef TrackIdsNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Size,
+      ffi.Pointer<ffi.Size>,
+    );
 
-typedef LibraryTrackMetadataDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-  ffi.Pointer<OfflinePlayerTrackMetadata>,
-);
+typedef TrackIdsDart =
+    int Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int64>,
+      int,
+      ffi.Pointer<ffi.Size>,
+    );
+
+typedef LibraryTrackMetadataNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Int64,
+      ffi.Pointer<OfflinePlayerTrackMetadata>,
+    );
+
+typedef LibraryTrackMetadataDart =
+    int Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      int,
+      ffi.Pointer<OfflinePlayerTrackMetadata>,
+    );
 
 /*
  * Current track technical information
  */
 
-typedef TrackSampleRateNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint32>,
-);
+typedef TrackSampleRateNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint32>,
+    );
 
-typedef TrackSampleRateDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint32>,
-);
+typedef TrackSampleRateDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint32>);
 
-typedef TrackChannelsNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint16>,
-);
+typedef TrackChannelsNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint16>,
+    );
 
-typedef TrackChannelsDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint16>,
-);
+typedef TrackChannelsDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint16>);
 
-typedef TrackBitsPerSampleNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint16>,
-);
+typedef TrackBitsPerSampleNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint16>,
+    );
 
-typedef TrackBitsPerSampleDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint16>,
-);
+typedef TrackBitsPerSampleDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint16>);
 
 /*
  * Cover Art
  */
 
-typedef LibraryTrackArtworkNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int64,
-  ffi.Pointer<OfflinePlayerTrackArtwork>,
-);
+typedef LibraryTrackArtworkNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Int64,
+      ffi.Pointer<OfflinePlayerTrackArtwork>,
+    );
 
-typedef LibraryTrackArtworkDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-  ffi.Pointer<OfflinePlayerTrackArtwork>,
-);
-
+typedef LibraryTrackArtworkDart =
+    int Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      int,
+      ffi.Pointer<OfflinePlayerTrackArtwork>,
+    );
 
 /*
  * Playback
  */
 
-typedef LoadTrackNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int64,
-);
+typedef LoadTrackNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Int64);
 
-typedef LoadTrackDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef LoadTrackDart = int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef PlayNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef PlayNative = ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef PlayDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef PlayDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef PauseNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef PauseNative = ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef PauseDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef PauseDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef StopNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef StopNative = ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef StopDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef StopDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef SeekToFrameNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Uint64,
-);
+typedef SeekToFrameNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Uint64);
 
-typedef SeekToFrameDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef SeekToFrameDart = int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
 /*
  * Playback state / position
  */
 
-typedef StateNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int32>,
-);
+typedef StateNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int32>,
+    );
 
-typedef StateDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int32>,
-);
+typedef StateDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Int32>);
 
-typedef CurrentFrameNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef CurrentFrameNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint64>,
+    );
 
-typedef CurrentFrameDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef CurrentFrameDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint64>);
 
-typedef CurrentSecondsNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Double>,
-);
+typedef CurrentSecondsNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Double>,
+    );
 
-typedef CurrentSecondsDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Double>,
-);
+typedef CurrentSecondsDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Double>);
 
-typedef DurationSecondsNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Double>,
-);
+typedef DurationSecondsNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Double>,
+    );
 
-typedef DurationSecondsDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Double>,
-);
+typedef DurationSecondsDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Double>);
 
-typedef TotalFramesNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef TotalFramesNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint64>,
+    );
 
-typedef TotalFramesDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef TotalFramesDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint64>);
 
 /*
  * Queue
  */
 
-typedef QueueSetNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Uint64,
-);
+typedef QueueSetNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Uint64,
+    );
 
-typedef SetVolumeNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Float,
-);
+typedef SetVolumeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Float);
 
-typedef SetVolumeDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  double,
-);
+typedef SetVolumeDart = int Function(ffi.Pointer<OfflinePlayerHandle>, double);
 
-typedef SetEqualizerGainsNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Float>,
-  ffi.Uint64,
-);
+typedef SetEqualizerGainsNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Float>,
+      ffi.Uint64,
+    );
 
-typedef SetEqualizerGainsDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Float>,
-  int,
-);
+typedef SetEqualizerGainsDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Float>, int);
 
-typedef QueueSetDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int64>,
-  int,
-);
+typedef QueueSetDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Int64>, int);
 
-typedef QueueAddNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int64,
-);
+typedef QueueAddNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Int64);
 
-typedef QueueAddDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef QueueAddDart = int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef QueueClearNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueClearNative = ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueClearDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueClearDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueLengthNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef QueueLengthNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint64>,
+    );
 
-typedef QueueLengthDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef QueueLengthDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint64>);
 
-typedef QueueTrackIdAtNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Uint64,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef QueueTrackIdAtNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Uint64,
+      ffi.Pointer<ffi.Int64>,
+    );
 
-typedef QueueTrackIdAtDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef QueueTrackIdAtDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int, ffi.Pointer<ffi.Int64>);
 
-typedef QueueUpNextCountNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef QueueUpNextCountNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint64>,
+    );
 
-typedef QueueUpNextCountDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef QueueUpNextCountDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint64>);
 
-typedef QueueReorderSegmentNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Uint64,
-  ffi.Pointer<ffi.Int64>,
-  ffi.Uint64,
-);
+typedef QueueReorderSegmentNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Uint64,
+      ffi.Pointer<ffi.Int64>,
+      ffi.Uint64,
+    );
 
-typedef QueueReorderSegmentDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-  ffi.Pointer<ffi.Int64>,
-  int,
-);
+typedef QueueReorderSegmentDart =
+    int Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      int,
+      ffi.Pointer<ffi.Int64>,
+      int,
+    );
 
-typedef QueueCurrentIndexNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef QueueCurrentIndexNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint64>,
+    );
 
-typedef QueueCurrentIndexDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Uint64>,
-);
+typedef QueueCurrentIndexDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint64>);
 
-typedef QueueCurrentTrackIdNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef QueueCurrentTrackIdNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int64>,
+    );
 
-typedef QueueCurrentTrackIdDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int64>,
-);
+typedef QueueCurrentTrackIdDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Int64>);
 
-typedef QueueSetRepeatModeNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int32,
-);
+typedef QueueSetRepeatModeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Int32);
 
-typedef QueueSetRepeatModeDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef QueueSetRepeatModeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef QueueRepeatModeNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int32>,
-);
+typedef QueueRepeatModeNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int32>,
+    );
 
-typedef QueueRepeatModeDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int32>,
-);
+typedef QueueRepeatModeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Int32>);
 
-typedef QueueSelectNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Uint64,
-);
+typedef QueueSelectNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Uint64);
 
-typedef QueueSelectDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef QueueSelectDart = int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef QueuePlayCurrentNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueuePlayCurrentNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueuePlayCurrentDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueuePlayCurrentDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueSelectAndLoadNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Uint64,
-);
+typedef QueueSelectAndLoadNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Uint64);
 
-typedef QueueSelectAndLoadDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef QueueSelectAndLoadDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef QueueSelectAndPlayNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Uint64,
-);
+typedef QueueSelectAndPlayNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Uint64);
 
-typedef QueueSelectAndPlayDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef QueueSelectAndPlayDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef QueueNextNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueNextNative = ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueNextDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueNextDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueNextAndPlayNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueNextAndPlayNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueNextAndPlayDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueNextAndPlayDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueuePreviousNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueuePreviousNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueuePreviousDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueuePreviousDart = int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueuePreviousAndPlayNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueuePreviousAndPlayNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueuePreviousAndPlayDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueuePreviousAndPlayDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueRepeatCurrentAndPlayNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueRepeatCurrentAndPlayNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueRepeatCurrentAndPlayDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueRepeatCurrentAndPlayDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueAdvanceAndPlayNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueAdvanceAndPlayNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueAdvanceAndPlayDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueAdvanceAndPlayDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueAdvanceIfAtEndNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueAdvanceIfAtEndNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
 
-typedef QueueAdvanceIfAtEndDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-);
+typedef QueueAdvanceIfAtEndDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>);
 
 /*
  * Output mode
  */
 
-typedef SetOutputModeNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Int32,
-);
+typedef SetOutputModeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Int32);
 
-typedef SetOutputModeDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  int,
-);
+typedef SetOutputModeDart = int Function(ffi.Pointer<OfflinePlayerHandle>, int);
 
-typedef OutputModeNative = ffi.Int32 Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int32>,
-);
+typedef OutputModeNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Int32>,
+    );
 
-typedef OutputModeDart = int Function(
-  ffi.Pointer<OfflinePlayerHandle>,
-  ffi.Pointer<ffi.Int32>,
-);
+typedef OutputModeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Int32>);
+
+typedef EffectiveOutputRateNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<ffi.Uint32>,
+    );
+
+typedef EffectiveOutputRateDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint32>);
 
 /*
  * Bindings
@@ -611,70 +537,61 @@ class OfflinePlayerBindings {
       'offline_player_last_error',
     );
 
-    scanDirectory =
-        library.lookupFunction<ScanDirectoryNative, ScanDirectoryDart>(
-      'offline_player_scan_directory',
-    );
+    scanDirectory = library
+        .lookupFunction<ScanDirectoryNative, ScanDirectoryDart>(
+          'offline_player_scan_directory',
+        );
 
-    trackCount =
-        library.lookupFunction<TrackCountNative, TrackCountDart>(
+    trackCount = library.lookupFunction<TrackCountNative, TrackCountDart>(
       'offline_player_library_track_count',
     );
 
-    trackIdAt =
-        library.lookupFunction<TrackIdAtNative, TrackIdAtDart>(
+    trackIdAt = library.lookupFunction<TrackIdAtNative, TrackIdAtDart>(
       'offline_player_library_track_id_at',
     );
 
-    libraryTrackMetadata =
-        library.lookupFunction<
-            LibraryTrackMetadataNative,
-            LibraryTrackMetadataDart>(
-      'offline_player_library_track_metadata',
+    trackIds = library.lookupFunction<TrackIdsNative, TrackIdsDart>(
+      'offline_player_library_track_ids',
     );
 
-    libraryTrackArtwork =
-        library.lookupFunction<
-            LibraryTrackArtworkNative,
-            LibraryTrackArtworkDart>(
-      'offline_player_library_track_artwork',
-    );
+    libraryTrackMetadata = library
+        .lookupFunction<LibraryTrackMetadataNative, LibraryTrackMetadataDart>(
+          'offline_player_library_track_metadata',
+        );
 
-    trackSampleRate =
-        library.lookupFunction<TrackSampleRateNative, TrackSampleRateDart>(
-      'offline_player_track_sample_rate',
-    );
+    libraryTrackArtwork = library
+        .lookupFunction<LibraryTrackArtworkNative, LibraryTrackArtworkDart>(
+          'offline_player_library_track_artwork',
+        );
 
-    trackChannels =
-        library.lookupFunction<TrackChannelsNative, TrackChannelsDart>(
-      'offline_player_track_channels',
-    );
+    trackSampleRate = library
+        .lookupFunction<TrackSampleRateNative, TrackSampleRateDart>(
+          'offline_player_track_sample_rate',
+        );
 
-    trackBitsPerSample = library.lookupFunction<
-        TrackBitsPerSampleNative,
-        TrackBitsPerSampleDart>(
-      'offline_player_track_bits_per_sample',
-    );
+    trackChannels = library
+        .lookupFunction<TrackChannelsNative, TrackChannelsDart>(
+          'offline_player_track_channels',
+        );
 
-    loadTrack =
-        library.lookupFunction<LoadTrackNative, LoadTrackDart>(
+    trackBitsPerSample = library
+        .lookupFunction<TrackBitsPerSampleNative, TrackBitsPerSampleDart>(
+          'offline_player_track_bits_per_sample',
+        );
+
+    loadTrack = library.lookupFunction<LoadTrackNative, LoadTrackDart>(
       'offline_player_load_track',
     );
 
-    play = library.lookupFunction<PlayNative, PlayDart>(
-      'offline_player_play',
-    );
+    play = library.lookupFunction<PlayNative, PlayDart>('offline_player_play');
 
     pause = library.lookupFunction<PauseNative, PauseDart>(
       'offline_player_pause',
     );
 
-    stop = library.lookupFunction<StopNative, StopDart>(
-      'offline_player_stop',
-    );
+    stop = library.lookupFunction<StopNative, StopDart>('offline_player_stop');
 
-    seekToFrame =
-        library.lookupFunction<SeekToFrameNative, SeekToFrameDart>(
+    seekToFrame = library.lookupFunction<SeekToFrameNative, SeekToFrameDart>(
       'offline_player_seek_to_frame',
     );
 
@@ -682,28 +599,25 @@ class OfflinePlayerBindings {
       'offline_player_state',
     );
 
-    currentFrame =
-        library.lookupFunction<CurrentFrameNative, CurrentFrameDart>(
+    currentFrame = library.lookupFunction<CurrentFrameNative, CurrentFrameDart>(
       'offline_player_current_frame',
     );
 
-    currentSeconds =
-        library.lookupFunction<CurrentSecondsNative, CurrentSecondsDart>(
-      'offline_player_current_seconds',
-    );
+    currentSeconds = library
+        .lookupFunction<CurrentSecondsNative, CurrentSecondsDart>(
+          'offline_player_current_seconds',
+        );
 
-    durationSeconds =
-        library.lookupFunction<DurationSecondsNative, DurationSecondsDart>(
-      'offline_player_duration_seconds',
-    );
+    durationSeconds = library
+        .lookupFunction<DurationSecondsNative, DurationSecondsDart>(
+          'offline_player_duration_seconds',
+        );
 
-    totalFrames =
-        library.lookupFunction<TotalFramesNative, TotalFramesDart>(
+    totalFrames = library.lookupFunction<TotalFramesNative, TotalFramesDart>(
       'offline_player_total_frames',
     );
 
-    queueSet =
-        library.lookupFunction<QueueSetNative, QueueSetDart>(
+    queueSet = library.lookupFunction<QueueSetNative, QueueSetDart>(
       'offline_player_queue_set',
     );
 
@@ -720,138 +634,116 @@ class OfflinePlayerBindings {
       'offline_player_queue_add',
     );
 
-    queueClear =
-        library.lookupFunction<QueueClearNative, QueueClearDart>(
+    queueClear = library.lookupFunction<QueueClearNative, QueueClearDart>(
       'offline_player_queue_clear',
     );
 
-    queueLength =
-        library.lookupFunction<QueueLengthNative, QueueLengthDart>(
+    queueLength = library.lookupFunction<QueueLengthNative, QueueLengthDart>(
       'offline_player_queue_length',
     );
 
-    queueTrackIdAt =
-        library.lookupFunction<QueueTrackIdAtNative, QueueTrackIdAtDart>(
-      'offline_player_queue_track_id_at',
-    );
+    queueTrackIdAt = library
+        .lookupFunction<QueueTrackIdAtNative, QueueTrackIdAtDart>(
+          'offline_player_queue_track_id_at',
+        );
 
-    queueUpNextCount =
-        library.lookupFunction<QueueUpNextCountNative, QueueUpNextCountDart>(
-      'offline_player_queue_up_next_count',
-    );
+    queueUpNextCount = library
+        .lookupFunction<QueueUpNextCountNative, QueueUpNextCountDart>(
+          'offline_player_queue_up_next_count',
+        );
 
-    queueReorderSegment = library.lookupFunction<
-        QueueReorderSegmentNative,
-        QueueReorderSegmentDart>('offline_player_queue_reorder_segment');
+    queueReorderSegment = library
+        .lookupFunction<QueueReorderSegmentNative, QueueReorderSegmentDart>(
+          'offline_player_queue_reorder_segment',
+        );
 
-    queueCurrentIndex =
-        library.lookupFunction<
-            QueueCurrentIndexNative,
-            QueueCurrentIndexDart>(
-      'offline_player_queue_current_index',
-    );
+    queueCurrentIndex = library
+        .lookupFunction<QueueCurrentIndexNative, QueueCurrentIndexDart>(
+          'offline_player_queue_current_index',
+        );
 
-    queueCurrentTrackId =
-        library.lookupFunction<
-            QueueCurrentTrackIdNative,
-            QueueCurrentTrackIdDart>(
-      'offline_player_queue_current_track_id',
-    );
+    queueCurrentTrackId = library
+        .lookupFunction<QueueCurrentTrackIdNative, QueueCurrentTrackIdDart>(
+          'offline_player_queue_current_track_id',
+        );
 
-    queueSetRepeatMode =
-        library.lookupFunction<
-            QueueSetRepeatModeNative,
-            QueueSetRepeatModeDart>(
-      'offline_player_queue_set_repeat_mode',
-    );
+    queueSetRepeatMode = library
+        .lookupFunction<QueueSetRepeatModeNative, QueueSetRepeatModeDart>(
+          'offline_player_queue_set_repeat_mode',
+        );
 
-    queueRepeatMode =
-        library.lookupFunction<
-            QueueRepeatModeNative,
-            QueueRepeatModeDart>(
-      'offline_player_queue_repeat_mode',
-    );
+    queueRepeatMode = library
+        .lookupFunction<QueueRepeatModeNative, QueueRepeatModeDart>(
+          'offline_player_queue_repeat_mode',
+        );
 
-    queueSelect =
-        library.lookupFunction<QueueSelectNative, QueueSelectDart>(
+    queueSelect = library.lookupFunction<QueueSelectNative, QueueSelectDart>(
       'offline_player_queue_select',
     );
 
-    queueSelectAndLoad =
-        library.lookupFunction<
-            QueueSelectAndLoadNative,
-            QueueSelectAndLoadDart>(
-      'offline_player_queue_select_and_load',
-    );
+    queueSelectAndLoad = library
+        .lookupFunction<QueueSelectAndLoadNative, QueueSelectAndLoadDart>(
+          'offline_player_queue_select_and_load',
+        );
 
-    queuePlayCurrent =
-        library.lookupFunction<
-            QueuePlayCurrentNative,
-            QueuePlayCurrentDart>(
-      'offline_player_queue_play_current',
-    );
+    queuePlayCurrent = library
+        .lookupFunction<QueuePlayCurrentNative, QueuePlayCurrentDart>(
+          'offline_player_queue_play_current',
+        );
 
-    queueSelectAndPlay =
-        library.lookupFunction<
-            QueueSelectAndPlayNative,
-            QueueSelectAndPlayDart>(
-      'offline_player_queue_select_and_play',
-    );
+    queueSelectAndPlay = library
+        .lookupFunction<QueueSelectAndPlayNative, QueueSelectAndPlayDart>(
+          'offline_player_queue_select_and_play',
+        );
 
-    queueNext =
-        library.lookupFunction<QueueNextNative, QueueNextDart>(
+    queueNext = library.lookupFunction<QueueNextNative, QueueNextDart>(
       'offline_player_queue_next',
     );
 
-    queueNextAndPlay =
-        library.lookupFunction<
-            QueueNextAndPlayNative,
-            QueueNextAndPlayDart>(
-      'offline_player_queue_next_and_play',
-    );
+    queueNextAndPlay = library
+        .lookupFunction<QueueNextAndPlayNative, QueueNextAndPlayDart>(
+          'offline_player_queue_next_and_play',
+        );
 
-    queuePrevious =
-        library.lookupFunction<QueuePreviousNative, QueuePreviousDart>(
-      'offline_player_queue_previous',
-    );
+    queuePrevious = library
+        .lookupFunction<QueuePreviousNative, QueuePreviousDart>(
+          'offline_player_queue_previous',
+        );
 
-    queuePreviousAndPlay =
-        library.lookupFunction<
-            QueuePreviousAndPlayNative,
-            QueuePreviousAndPlayDart>(
-      'offline_player_queue_previous_and_play',
-    );
+    queuePreviousAndPlay = library
+        .lookupFunction<QueuePreviousAndPlayNative, QueuePreviousAndPlayDart>(
+          'offline_player_queue_previous_and_play',
+        );
 
-    queueRepeatCurrentAndPlay =
-        library.lookupFunction<
-            QueueRepeatCurrentAndPlayNative,
-            QueueRepeatCurrentAndPlayDart>(
-      'offline_player_queue_repeat_current_and_play',
-    );
+    queueRepeatCurrentAndPlay = library
+        .lookupFunction<
+          QueueRepeatCurrentAndPlayNative,
+          QueueRepeatCurrentAndPlayDart
+        >('offline_player_queue_repeat_current_and_play');
 
-    queueAdvanceAndPlay =
-        library.lookupFunction<
-            QueueAdvanceAndPlayNative,
-            QueueAdvanceAndPlayDart>(
-      'offline_player_queue_advance_and_play',
-    );
+    queueAdvanceAndPlay = library
+        .lookupFunction<QueueAdvanceAndPlayNative, QueueAdvanceAndPlayDart>(
+          'offline_player_queue_advance_and_play',
+        );
 
-    queueAdvanceIfAtEnd =
-        library.lookupFunction<
-            QueueAdvanceIfAtEndNative,
-            QueueAdvanceIfAtEndDart>(
-      'offline_player_queue_advance_if_at_end',
-    );
+    queueAdvanceIfAtEnd = library
+        .lookupFunction<QueueAdvanceIfAtEndNative, QueueAdvanceIfAtEndDart>(
+          'offline_player_queue_advance_if_at_end',
+        );
 
-    setOutputMode =
-        library.lookupFunction<SetOutputModeNative, SetOutputModeDart>(
-      'offline_player_set_output_mode',
-    );
+    setOutputMode = library
+        .lookupFunction<SetOutputModeNative, SetOutputModeDart>(
+          'offline_player_set_output_mode',
+        );
 
-    outputMode =
-        library.lookupFunction<OutputModeNative, OutputModeDart>(
+    outputMode = library.lookupFunction<OutputModeNative, OutputModeDart>(
       'offline_player_output_mode',
     );
+
+    effectiveOutputRate = library
+        .lookupFunction<EffectiveOutputRateNative, EffectiveOutputRateDart>(
+          'offline_player_effective_output_rate',
+        );
   }
 
   final ffi.DynamicLibrary library;
@@ -865,6 +757,7 @@ class OfflinePlayerBindings {
   late final ScanDirectoryDart scanDirectory;
   late final TrackCountDart trackCount;
   late final TrackIdAtDart trackIdAt;
+  late final TrackIdsDart trackIds;
   late final LibraryTrackMetadataDart libraryTrackMetadata;
   late final LibraryTrackArtworkDart libraryTrackArtwork;
   late final TrackSampleRateDart trackSampleRate;
@@ -915,17 +808,14 @@ class OfflinePlayerBindings {
 
   late final SetOutputModeDart setOutputMode;
   late final OutputModeDart outputMode;
+  late final EffectiveOutputRateDart effectiveOutputRate;
 
   static ffi.DynamicLibrary openLibrary(String path) {
     if (!Platform.isMacOS) {
-      throw UnsupportedError(
-        'Mobius currently supports macOS only.',
-      );
+      throw UnsupportedError('Mobius currently supports macOS only.');
     }
 
-    final executable = File(
-      Platform.resolvedExecutable,
-    );
+    final executable = File(Platform.resolvedExecutable);
 
     final contentsDirectory = executable.parent.parent;
 
@@ -935,9 +825,7 @@ class OfflinePlayerBindings {
     );
 
     if (bundledLibrary.existsSync()) {
-      return ffi.DynamicLibrary.open(
-        bundledLibrary.path,
-      );
+      return ffi.DynamicLibrary.open(bundledLibrary.path);
     }
 
     // Fallback untuk development/debug.

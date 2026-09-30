@@ -8,10 +8,11 @@ use std::{
 use offline_player_ffi::{
     offline_player_create, offline_player_current_frame, offline_player_current_seconds,
     offline_player_destroy, offline_player_duration_seconds, offline_player_library_track_count,
-    offline_player_library_track_id_at, offline_player_load_track, offline_player_pause,
-    offline_player_play, offline_player_scan_directory, offline_player_seek_to_frame,
-    offline_player_state, offline_player_stop, offline_player_total_frames,
-    offline_player_track_album, offline_player_track_artist, offline_player_track_asset_id,
+    offline_player_library_track_id_at, offline_player_library_track_ids,
+    offline_player_load_track, offline_player_pause, offline_player_play,
+    offline_player_scan_directory, offline_player_seek_to_frame, offline_player_state,
+    offline_player_stop, offline_player_total_frames, offline_player_track_album,
+    offline_player_track_artist, offline_player_track_asset_id,
     offline_player_track_bits_per_sample, offline_player_track_channels,
     offline_player_track_composer, offline_player_track_date, offline_player_track_genre,
     offline_player_track_id, offline_player_track_number, offline_player_track_path,
@@ -120,6 +121,32 @@ fn ffi_smoke_test() {
     );
 
     assert!(track_count > 0);
+
+    // Batch export must agree with the per-index export, in order.
+    let mut total = 0usize;
+    assert_eq!(
+        unsafe { offline_player_library_track_ids(handle, ptr::null_mut(), 0, &mut total) },
+        OfflinePlayerResult::BufferTooSmall,
+        "zero-capacity call must report the required size"
+    );
+    assert_eq!(total as i64, track_count);
+
+    let mut batch_ids = vec![0i64; total];
+    check(
+        unsafe {
+            offline_player_library_track_ids(handle, batch_ids.as_mut_ptr(), total, &mut total)
+        },
+        "library track ids",
+    );
+
+    for (index, &batch_id) in batch_ids.iter().enumerate() {
+        let mut single_id = 0i64;
+        check(
+            unsafe { offline_player_library_track_id_at(handle, index as i64, &mut single_id) },
+            "library track id",
+        );
+        assert_eq!(batch_id, single_id, "id mismatch at index {index}");
+    }
 
     let mut emc_track_id = None;
 

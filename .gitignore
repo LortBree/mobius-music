@@ -85,3 +85,6 @@ build/
 
 # ---------- Test artifacts ----------
 coverage/
+
+# ---------- Kiro ----------
+.kiro/

@@ -2,7 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/ffi/offline_player.dart';
+import '../../app/theme/colors.dart';
 import '../../features/library/data/ffi_library_repository.dart';
+import '../playback_poller.dart';
 import '../player_controller.dart';
 
 class QueuePanel extends StatefulWidget {
@@ -24,7 +26,19 @@ class QueuePanel extends StatefulWidget {
 }
 
 class _QueuePanelState extends State<QueuePanel> {
-  Timer? _queueTimer;
+  // The queue only changes on commands (handled immediately below) or on a
+  // track advance during playback, so idle polling can be slow.
+  late final PlaybackPoller _poller = PlaybackPoller(
+    onTick: _refreshQueue,
+    isActive: () {
+      try {
+        return widget.playerController.state == OfflinePlayerState.playing;
+      } catch (_) {
+        return false;
+      }
+    },
+    activeInterval: const Duration(milliseconds: 300),
+  );
   List<int> _queueIds = const [];
   List<TrackMetadata> _queueTracks = const [];
   final Map<int, ImageProvider> _artworkCache = {};
@@ -35,16 +49,23 @@ class _QueuePanelState extends State<QueuePanel> {
   void initState() {
     super.initState();
     _refreshQueue();
-    _queueTimer = Timer.periodic(
-      const Duration(milliseconds: 300),
-      (_) => _refreshQueue(),
-    );
+    widget.playerController.commands.addListener(_onPlayerCommand);
+    _poller.start();
   }
 
   @override
   void dispose() {
-    _queueTimer?.cancel();
+    widget.playerController.commands.removeListener(_onPlayerCommand);
+    _poller.stop();
     super.dispose();
+  }
+
+  void _onPlayerCommand() {
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      _refreshQueue();
+      _poller.wake();
+    });
   }
 
   int _readCurrentIndex() {
@@ -60,7 +81,8 @@ class _QueuePanelState extends State<QueuePanel> {
       final ids = widget.playerController.queueTrackIds;
       final currentIndex = _readCurrentIndex();
       final upNextCount = widget.playerController.queueUpNextCount;
-      final idsChanged = ids.length != _queueIds.length ||
+      final idsChanged =
+          ids.length != _queueIds.length ||
           ids.asMap().entries.any(
             (entry) => _queueIds[entry.key] != entry.value,
           );
@@ -123,9 +145,10 @@ class _QueuePanelState extends State<QueuePanel> {
     }
   }
 
-  void _selectTrack(int index) {
+  Future<void> _selectTrack(int index) async {
     try {
-      widget.playerController.selectAndPlay(index);
+      await widget.playerController.selectAndPlay(index);
+      if (!mounted) return;
       widget.onTrackSelected();
     } catch (error) {
       if (!mounted) return;
@@ -166,8 +189,8 @@ class _QueuePanelState extends State<QueuePanel> {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFFEDEDED),
+              style: TextStyle(
+                color: MobiusColors.textOf(context),
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
               ),
@@ -176,8 +199,8 @@ class _QueuePanelState extends State<QueuePanel> {
           if (trailing != null)
             Text(
               trailing,
-              style: const TextStyle(
-                color: Color(0xFF9A9A9A),
+              style: TextStyle(
+                color: MobiusColors.textDimOf(context),
                 fontSize: 11,
               ),
             ),
@@ -190,7 +213,7 @@ class _QueuePanelState extends State<QueuePanel> {
     padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
     child: Text(
       text,
-      style: const TextStyle(color: Color(0xFF85818D), fontSize: 12),
+      style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 12),
     ),
   );
 
@@ -204,7 +227,7 @@ class _QueuePanelState extends State<QueuePanel> {
     final artwork = _artworkFor(track.trackId);
     return Material(
       key: ValueKey('queue-${track.trackId}-$queueIndex'),
-      color: isCurrent ? const Color(0xFF30263C) : Colors.transparent,
+      color: isCurrent ? MobiusColors.borderOf(context) : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: () => _selectTrack(queueIndex),
@@ -218,11 +241,11 @@ class _QueuePanelState extends State<QueuePanel> {
                 child: SizedBox.square(
                   dimension: 44,
                   child: artwork == null
-                      ? const ColoredBox(
-                          color: Color(0xFF292631),
+                      ? ColoredBox(
+                          color: MobiusColors.borderOf(context),
                           child: Icon(
                             Icons.music_note_rounded,
-                            color: Color(0xFF9A9A9A),
+                            color: MobiusColors.textDimOf(context),
                             size: 20,
                           ),
                         )
@@ -239,13 +262,15 @@ class _QueuePanelState extends State<QueuePanel> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      track.title.trim().isEmpty ? 'Unknown title' : track.title,
+                      track.title.trim().isEmpty
+                          ? 'Unknown title'
+                          : track.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: isCurrent
-                            ? const Color(0xFFC4A8F0)
-                            : const Color(0xFFEDEDED),
+                            ? MobiusColors.accentLightOf(context)
+                            : MobiusColors.textOf(context),
                         fontSize: 12,
                         fontWeight: isCurrent
                             ? FontWeight.w600
@@ -259,8 +284,8 @@ class _QueuePanelState extends State<QueuePanel> {
                           : track.artist,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF9A9A9A),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 11,
                       ),
                     ),
@@ -270,22 +295,22 @@ class _QueuePanelState extends State<QueuePanel> {
               if (reorderable)
                 ReorderableDragStartListener(
                   index: dragIndex,
-                  child: const Padding(
-                    padding: EdgeInsets.all(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
                     child: Icon(
                       Icons.drag_handle_rounded,
                       size: 18,
-                      color: Color(0xFF9A9A9A),
+                      color: MobiusColors.textDimOf(context),
                     ),
                   ),
                 )
               else if (isCurrent)
-                const Padding(
-                  padding: EdgeInsets.all(8),
+                Padding(
+                  padding: const EdgeInsets.all(8),
                   child: Icon(
                     Icons.equalizer_rounded,
                     size: 17,
-                    color: Color(0xFFB58AF4),
+                    color: MobiusColors.accentLightOf(context),
                   ),
                 ),
             ],
@@ -297,15 +322,16 @@ class _QueuePanelState extends State<QueuePanel> {
 
   @override
   Widget build(BuildContext context) {
-    final hasCurrent = _currentIndex >= 0 && _currentIndex < _queueTracks.length;
+    final hasCurrent =
+        _currentIndex >= 0 && _currentIndex < _queueTracks.length;
     final upcomingStart = hasCurrent ? (_currentIndex + 1).toInt() : 0;
     final upcomingTracks = _queueTracks.sublist(upcomingStart);
     final currentTrack = hasCurrent ? _queueTracks[_currentIndex] : null;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1A1A),
-        border: Border(left: BorderSide(color: Color(0xFF2A2A2A))),
+      decoration: BoxDecoration(
+        color: MobiusColors.panelOf(context),
+        border: Border(left: BorderSide(color: MobiusColors.borderOf(context))),
       ),
       child: SafeArea(
         left: false,
@@ -316,20 +342,20 @@ class _QueuePanelState extends State<QueuePanel> {
             children: [
               Row(
                 children: [
-                  const Text(
+                  Text(
                     'Queue',
                     style: TextStyle(
                       fontSize: 19,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFFEDEDED),
+                      color: MobiusColors.textOf(context),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Text(
                     '${_queueTracks.length}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF9A9A9A),
+                      color: MobiusColors.textDimOf(context),
                     ),
                   ),
                   const Spacer(),
@@ -340,13 +366,11 @@ class _QueuePanelState extends State<QueuePanel> {
                   ),
                 ],
               ),
-              const Divider(color: Color(0xFF2A2A2A), height: 1),
+              Divider(color: MobiusColors.borderOf(context), height: 1),
               Expanded(
                 child: CustomScrollView(
                   slivers: [
-                    SliverToBoxAdapter(
-                      child: _sectionLabel('Now playing'),
-                    ),
+                    SliverToBoxAdapter(child: _sectionLabel('Now playing')),
                     if (currentTrack != null)
                       SliverPadding(
                         padding: const EdgeInsets.symmetric(horizontal: 2),

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use thiserror::Error;
 
 use crate::{
@@ -74,8 +76,15 @@ impl PlaybackQueue {
         service: &PlaybackService,
         track_ids: Vec<i64>,
     ) -> Result<(), PlaybackQueueError> {
-        for &track_id in &track_ids {
-            if service.library().playback_track(track_id)?.is_none() {
+        // One id-only query instead of a joined row lookup per track.
+        if !track_ids.is_empty() {
+            let known: HashSet<i64> = service
+                .library()
+                .playback_track_ids()?
+                .into_iter()
+                .collect();
+
+            if let Some(&track_id) = track_ids.iter().find(|id| !known.contains(id)) {
                 return Err(PlaybackQueueError::TrackNotFound { track_id });
             }
         }
@@ -434,6 +443,39 @@ mod tests {
         assert_eq!(queue.current_index(), None);
         assert_eq!(queue.current_position(), None);
         assert_eq!(queue.repeat_mode(), RepeatMode::Off);
+    }
+
+    #[test]
+    fn set_queue_rejects_unknown_track_and_keeps_previous_queue() {
+        let service = empty_service();
+        let mut queue = PlaybackQueue::new();
+
+        queue.track_ids = vec![7];
+        queue.current_index = Some(0);
+
+        let error = queue
+            .set_queue(&service, vec![42, 43])
+            .expect_err("unknown ids must be rejected");
+
+        assert!(matches!(
+            error,
+            PlaybackQueueError::TrackNotFound { track_id: 42 }
+        ));
+        assert_eq!(queue.track_ids, vec![7]);
+        assert_eq!(queue.current_index(), Some(0));
+    }
+
+    #[test]
+    fn set_queue_accepts_empty_list() {
+        let service = empty_service();
+        let mut queue = PlaybackQueue::new();
+
+        queue
+            .set_queue(&service, Vec::new())
+            .expect("empty queue is valid");
+
+        assert!(queue.is_empty());
+        assert_eq!(queue.current_index(), None);
     }
 
     #[test]

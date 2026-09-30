@@ -6,7 +6,10 @@ import 'package:flutter/services.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../../../playback/audio_output_policy.dart';
 import '../../../playback/player_controller.dart';
+import '../../app/theme/colors.dart';
 import '../../features/library/data/ffi_library_repository.dart';
+import '../playback_time_format.dart';
+import '../playback_poller.dart';
 import 'queue_panel.dart';
 
 class NowPlayingPage extends StatefulWidget {
@@ -22,13 +25,14 @@ class NowPlayingPage extends StatefulWidget {
   final bool initialOpenQueue;
 
   @override
-  State<NowPlayingPage> createState() =>
-      _NowPlayingPageState();
+  State<NowPlayingPage> createState() => _NowPlayingPageState();
 }
 
-class _NowPlayingPageState
-    extends State<NowPlayingPage> {
-  Timer? _timer;
+class _NowPlayingPageState extends State<NowPlayingPage> {
+  late final PlaybackPoller _poller = PlaybackPoller(
+    onTick: _tick,
+    isActive: () => _state == OfflinePlayerState.playing,
+  );
 
   TrackMetadata? _track;
   ImageProvider? _artworkImage;
@@ -36,15 +40,18 @@ class _NowPlayingPageState
   AudioOutputDecision? _audioOutputDecision;
 
   int _currentTrackId = 0;
-  double _position = 0;
+
+  // Position changes every poll tick; keep it out of
+  // setState so only the seek bar and time label rebuild.
+  final ValueNotifier<double> _positionNotifier = ValueNotifier<double>(0);
+  double get _position => _positionNotifier.value;
+
   double _duration = 0;
   int _totalFrames = 0;
 
-  OfflinePlayerState _state =
-      OfflinePlayerState.idle;
+  OfflinePlayerState _state = OfflinePlayerState.idle;
 
-  OfflinePlayerRepeatMode _repeatMode =
-      OfflinePlayerRepeatMode.off;
+  OfflinePlayerRepeatMode _repeatMode = OfflinePlayerRepeatMode.off;
 
   bool _isSeeking = false;
 
@@ -60,18 +67,45 @@ class _NowPlayingPageState
 
     _syncPlayer();
 
-    _timer = Timer.periodic(
-      const Duration(milliseconds: 200),
-      (_) => _tick(),
-    );
+    widget.playerController.commands.addListener(_onPlayerCommand);
+    widget.playerController.pendingTrackId.addListener(_onPendingTrack);
+    _poller.start();
 
     _queueOpen = widget.initialOpenQueue;
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    widget.playerController.commands.removeListener(_onPlayerCommand);
+    widget.playerController.pendingTrackId.removeListener(_onPendingTrack);
+    _poller.stop();
+    _positionNotifier.dispose();
     super.dispose();
+  }
+
+  /// Paint the upcoming track before the native load blocks the UI thread.
+  /// Technical info stays on the old track until the real sync, because it
+  /// is only known once the new file is open.
+  void _onPendingTrack() {
+    final trackId = widget.playerController.pendingTrackId.value;
+    if (!mounted || trackId == null || trackId == _currentTrackId) return;
+    TrackMetadata? track;
+    try {
+      track = widget.repository.getTrackMetadata(trackId);
+    } catch (_) {}
+    _positionNotifier.value = 0;
+    setState(() {
+      _track = track;
+      _loadArtworkForTrack(trackId);
+    });
+  }
+
+  void _onPlayerCommand() {
+    scheduleMicrotask(() {
+      if (!mounted) return;
+      _tick();
+      _poller.wake();
+    });
   }
 
   void _tick() {
@@ -108,52 +142,40 @@ class _NowPlayingPageState
 
   void _syncPlayer() {
     try {
-      final currentTrackId =
-          widget.playerController.currentTrackId;
+      final currentTrackId = widget.playerController.currentTrackId;
 
-      final position =
-          widget.playerController.currentSeconds;
+      final position = widget.playerController.currentSeconds;
 
-      final duration =
-          widget.playerController.durationSeconds;
+      final duration = widget.playerController.durationSeconds;
 
-      final totalFrames =
-          widget.playerController.totalFrames;
+      final totalFrames = widget.playerController.totalFrames;
 
-      final state =
-          widget.playerController.state;
+      final state = widget.playerController.state;
 
-      final repeatMode =
-          widget.playerController.repeatMode;
+      final repeatMode = widget.playerController.repeatMode;
 
       TrackMetadata? track = _track;
-      TrackTechnicalInfo? technicalInfo =
-          _technicalInfo;
-      AudioOutputDecision? audioOutputDecision =
-          _audioOutputDecision;
+      TrackTechnicalInfo? technicalInfo = _technicalInfo;
+      AudioOutputDecision? audioOutputDecision = _audioOutputDecision;
 
       if (currentTrackId != _currentTrackId) {
         _loadArtworkForTrack(currentTrackId);
 
         if (currentTrackId > 0) {
           try {
-            track = widget.repository
-                .getTrackMetadata(currentTrackId);
+            track = widget.repository.getTrackMetadata(currentTrackId);
           } catch (_) {
             track = null;
           }
 
           try {
-            technicalInfo =
-                widget.playerController.technicalInfo;
+            technicalInfo = widget.playerController.technicalInfo;
           } catch (_) {
             technicalInfo = null;
           }
 
           try {
-            audioOutputDecision =
-                widget.playerController
-                    .audioOutputDecision;
+            audioOutputDecision = widget.playerController.audioOutputDecision;
           } catch (_) {
             audioOutputDecision = null;
           }
@@ -168,17 +190,30 @@ class _NowPlayingPageState
         return;
       }
 
+      _positionNotifier.value = position;
+
+      // Track metadata/technical info only change with the
+      // track id, so the id check covers them.
+      final discreteChanged =
+          currentTrackId != _currentTrackId ||
+          duration != _duration ||
+          totalFrames != _totalFrames ||
+          state != _state ||
+          repeatMode != _repeatMode;
+
+      if (!discreteChanged) {
+        return;
+      }
+
       setState(() {
         _currentTrackId = currentTrackId;
-        _position = position;
         _duration = duration;
         _totalFrames = totalFrames;
         _state = state;
         _repeatMode = repeatMode;
         _track = track;
         _technicalInfo = technicalInfo;
-        _audioOutputDecision =
-            audioOutputDecision;
+        _audioOutputDecision = audioOutputDecision;
       });
     } catch (_) {
       // Keep the current UI state if native state
@@ -188,8 +223,7 @@ class _NowPlayingPageState
 
   void _togglePlayback() {
     try {
-      if (_state ==
-          OfflinePlayerState.playing) {
+      if (_state == OfflinePlayerState.playing) {
         widget.playerController.pause();
       } else {
         widget.playerController.play();
@@ -201,38 +235,33 @@ class _NowPlayingPageState
     }
   }
 
-  void _previous() {
+  Future<void> _previous() async {
     try {
-      widget.playerController.previous();
-      _syncPlayer();
+      await widget.playerController.previous();
+      if (mounted) _syncPlayer();
     } catch (error) {
-      _showError(error);
+      if (mounted) _showError(error);
     }
   }
 
-  void _next() {
+  Future<void> _next() async {
     try {
-      widget.playerController.next();
-      _syncPlayer();
+      await widget.playerController.next();
+      if (mounted) _syncPlayer();
     } catch (error) {
-      _showError(error);
+      if (mounted) _showError(error);
     }
   }
 
   void _cycleRepeatMode() {
     try {
-      final nextMode =
-          switch (_repeatMode) {
-        OfflinePlayerRepeatMode.off =>
-          OfflinePlayerRepeatMode.track,
-        OfflinePlayerRepeatMode.track =>
-          OfflinePlayerRepeatMode.queue,
-        OfflinePlayerRepeatMode.queue =>
-          OfflinePlayerRepeatMode.off,
+      final nextMode = switch (_repeatMode) {
+        OfflinePlayerRepeatMode.off => OfflinePlayerRepeatMode.track,
+        OfflinePlayerRepeatMode.track => OfflinePlayerRepeatMode.queue,
+        OfflinePlayerRepeatMode.queue => OfflinePlayerRepeatMode.off,
       };
 
-      widget.playerController
-          .setRepeatMode(nextMode);
+      widget.playerController.setRepeatMode(nextMode);
 
       _syncPlayer();
     } catch (error) {
@@ -268,42 +297,34 @@ class _NowPlayingPageState
       });
     }
 
-    setState(() {
-      _position = value;
-    });
+    _positionNotifier.value = value;
   }
 
   void _onSeekEnd(double value) {
     final duration = _duration;
     final totalFrames = _totalFrames;
 
-    if (duration <= 0 ||
-        totalFrames <= 0) {
+    if (duration <= 0 || totalFrames <= 0) {
       setState(() {
         _isSeeking = false;
       });
       return;
     }
 
-    final ratio =
-        (value / duration).clamp(0.0, 1.0);
+    final ratio = (value / duration).clamp(0.0, 1.0);
 
-    final frame =
-        (ratio * totalFrames).round().clamp(
-              0,
-              totalFrames,
-            );
+    final frame = (ratio * totalFrames).round().clamp(0, totalFrames);
 
     try {
-      widget.playerController
-          .seekToFrame(frame);
+      widget.playerController.seekToFrame(frame);
 
       if (!mounted) {
         return;
       }
 
+      _positionNotifier.value = value;
+
       setState(() {
-        _position = value;
         _isSeeking = false;
       });
 
@@ -328,32 +349,10 @@ class _NowPlayingPageState
 
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            error.toString(),
-          ),
-        ),
-      );
+      ..showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
-  String _formatTime(double seconds) {
-    if (!seconds.isFinite ||
-        seconds < 0) {
-      return '00:00';
-    }
-
-    final totalSeconds =
-        seconds.floor();
-
-    final minutes =
-        totalSeconds ~/ 60;
-
-    final remainingSeconds =
-        totalSeconds % 60;
-
-    return '$minutes:${remainingSeconds.toString().padLeft(2, '0')}';
-  }
+  String _formatTime(double seconds) => formatPlaybackTime(seconds);
 
   String _formatSampleRate(int sampleRate) {
     return formatSampleRate(sampleRate);
@@ -397,7 +396,9 @@ class _NowPlayingPageState
       return KeyEventResult.ignored;
     }
     final keyboard = HardwareKeyboard.instance;
-    if (keyboard.isControlPressed || keyboard.isMetaPressed || keyboard.isAltPressed) {
+    if (keyboard.isControlPressed ||
+        keyboard.isMetaPressed ||
+        keyboard.isAltPressed) {
       return KeyEventResult.ignored;
     }
     final shift = keyboard.isShiftPressed;
@@ -435,9 +436,7 @@ class _NowPlayingPageState
 
   void _adjustVolume(double delta) {
     try {
-      widget.playerController.setVolume(
-        widget.playerController.volume + delta,
-      );
+      widget.playerController.setVolume(widget.playerController.volume + delta);
     } catch (error) {
       _showError(error);
     }
@@ -447,40 +446,25 @@ class _NowPlayingPageState
   Widget build(BuildContext context) {
     final track = _track;
     final technicalInfo = _technicalInfo;
-    final audioOutputDecision =
-        _audioOutputDecision;
+    final audioOutputDecision = _audioOutputDecision;
 
-    final maxValue =
-        _duration > 0 ? _duration : 1.0;
-
-    final sliderValue =
-        _position.clamp(
-          0.0,
-          maxValue,
-        );
+    final maxValue = _duration > 0 ? _duration : 1.0;
 
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF121212),
+      backgroundColor: MobiusColors.backgroundOf(context),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        foregroundColor:
-            const Color(0xFFFAFAFA),
+        foregroundColor: MobiusColors.textOf(context),
         elevation: 0,
-        title: const Text(
-          'Now Playing',
-        ),
+        title: const Text('Now Playing'),
         actions: [
           IconButton(
-            tooltip:
-                _queueOpen ? 'Hide queue' : 'Show queue',
+            tooltip: _queueOpen ? 'Hide queue' : 'Show queue',
             onPressed: _toggleQueue,
             color: _queueOpen
-                ? const Color(0xFFC4A8F0)
-                : const Color(0xFFEDEDED),
-            icon: const Icon(
-              Icons.queue_music,
-            ),
+                ? MobiusColors.accentLightOf(context)
+                : MobiusColors.textOf(context),
+            icon: const Icon(Icons.queue_music),
           ),
         ],
       ),
@@ -488,387 +472,274 @@ class _NowPlayingPageState
         autofocus: true,
         onKeyEvent: _handleKeyboardShortcut,
         child: SafeArea(
-        child: Row(
-          children: [
-            Expanded(
-              child: LayoutBuilder(
-          builder: (
-            context,
-            constraints,
-          ) {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(
-                32,
-                24,
-                32,
-                32,
-              ),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight:
-                      constraints.maxHeight -
-                          56,
-                ),
-                child: Column(
-                  mainAxisAlignment:
-                      MainAxisAlignment.center,
-                  children: [
-                    _Artwork(
-                      size: 320,
-                      image: _artworkImage,
-                    ),
-
-                    const SizedBox(
-                      height: 32,
-                    ),
-
-                    Text(
-                      track?.title.isNotEmpty ==
-                              true
-                          ? track!.title
-                          : 'Nothing playing',
-                      maxLines: 2,
-                      overflow:
-                          TextOverflow.ellipsis,
-                      textAlign:
-                          TextAlign.center,
-                      style: const TextStyle(
-                        color:
-                            Color(0xFFFAFAFA),
-                        fontSize: 26,
-                        fontWeight:
-                            FontWeight.w600,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 8,
-                    ),
-
-                    Text(
-                      track?.artist.isNotEmpty ==
-                              true
-                          ? track!.artist
-                          : 'Unknown artist',
-                      maxLines: 1,
-                      overflow:
-                          TextOverflow.ellipsis,
-                      textAlign:
-                          TextAlign.center,
-                      style: const TextStyle(
-                        color:
-                            Color(0xFF9A9A9A),
-                        fontSize: 16,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 4,
-                    ),
-
-                    Text(
-                      track?.album.isNotEmpty ==
-                              true
-                          ? track!.album
-                          : 'Unknown album',
-                      maxLines: 1,
-                      overflow:
-                          TextOverflow.ellipsis,
-                      textAlign:
-                          TextAlign.center,
-                      style: const TextStyle(
-                        color:
-                            Color(0xFF9A9A9A),
-                        fontSize: 14,
-                      ),
-                    ),
-
-                    const SizedBox(
-                      height: 16,
-                    ),
-
-                    if (technicalInfo != null)
-                      _TechnicalInfo(
-                        technicalInfo:
-                            technicalInfo,
-                        formatSampleRate:
-                            _formatSampleRate,
-                        formatChannels:
-                            _formatChannels,
-                      ),
-
-                    if (audioOutputDecision !=
-                        null) ...[
-                      const SizedBox(
-                        height: 8,
-                      ),
-                      _AudioOutputInfo(
-                        decision:
-                            audioOutputDecision,
-                      ),
-                    ],
-
-                    const SizedBox(
-                      height: 24,
-                    ),
-
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: 760,
-                      ),
-                      child: _SeekBar(
-                        value: sliderValue,
-                        duration: _duration,
-                        enabled: _duration > 0 &&
-                            _totalFrames > 0,
-                        onChanged: _onSeekChanged,
-                        onChangeEnd: _onSeekEnd,
-                        formatTime: _formatTime,
-                      ),
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: 760,
-                      ),
-                      child: Padding(
-                        padding:
-                            const EdgeInsets.symmetric(
-                          horizontal: 4,
+          child: Row(
+            children: [
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight - 56,
                         ),
-                        child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceBetween,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            _Artwork(size: 320, image: _artworkImage),
+
+                            const SizedBox(height: 32),
+
                             Text(
-                              _formatTime(_position),
-                              style: const TextStyle(
-                                color: Color(0xFF9A9A9A),
-                                fontSize: 12,
-                                fontFeatures: [
-                                  FontFeature.tabularFigures(),
-                                ],
+                              track?.title.isNotEmpty == true
+                                  ? track!.title
+                                  : 'Nothing playing',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: MobiusColors.textOf(context),
+                                fontSize: 26,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
+
+                            const SizedBox(height: 8),
+
                             Text(
-                              _formatTime(_duration),
-                              style: const TextStyle(
-                                color: Color(0xFF9A9A9A),
+                              track?.artist.isNotEmpty == true
+                                  ? track!.artist
+                                  : 'Unknown artist',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: MobiusColors.textDimOf(context),
+                                fontSize: 16,
+                              ),
+                            ),
+
+                            const SizedBox(height: 4),
+
+                            Text(
+                              track?.album.isNotEmpty == true
+                                  ? track!.album
+                                  : 'Unknown album',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: MobiusColors.textDimOf(context),
+                                fontSize: 14,
+                              ),
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            if (technicalInfo != null)
+                              _TechnicalInfo(
+                                technicalInfo: technicalInfo,
+                                formatSampleRate: _formatSampleRate,
+                                formatChannels: _formatChannels,
+                              ),
+
+                            if (audioOutputDecision != null) ...[
+                              const SizedBox(height: 8),
+                              _AudioOutputInfo(decision: audioOutputDecision),
+                            ],
+
+                            const SizedBox(height: 24),
+
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 760),
+                              child: ValueListenableBuilder<double>(
+                                valueListenable: _positionNotifier,
+                                builder: (context, position, _) => _SeekBar(
+                                  value: position.clamp(0.0, maxValue),
+                                  duration: _duration,
+                                  enabled: _duration > 0 && _totalFrames > 0,
+                                  onChanged: _onSeekChanged,
+                                  onChangeEnd: _onSeekEnd,
+                                  formatTime: _formatTime,
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 4),
+
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 760),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    ValueListenableBuilder<double>(
+                                      valueListenable: _positionNotifier,
+                                      builder: (context, position, _) => Text(
+                                        _formatTime(position),
+                                        style: TextStyle(
+                                          color: MobiusColors.textDimOf(
+                                            context,
+                                          ),
+                                          fontSize: 12,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      _formatTime(_duration),
+                                      style: TextStyle(
+                                        color: MobiusColors.textDimOf(context),
+                                        fontSize: 12,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: 20),
+
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Previous',
+                                  onPressed:
+                                      widget.playerController.queueLength > 0
+                                      ? _previous
+                                      : null,
+                                  iconSize: 28,
+                                  color: MobiusColors.textOf(context),
+                                  icon: const Icon(Icons.skip_previous),
+                                ),
+
+                                const SizedBox(width: 16),
+
+                                SizedBox(
+                                  width: 64,
+                                  height: 64,
+                                  child: IconButton(
+                                    tooltip:
+                                        _state == OfflinePlayerState.playing
+                                        ? 'Pause'
+                                        : 'Play',
+                                    onPressed: _togglePlayback,
+                                    iconSize: 38,
+                                    color: MobiusColors.onAccentOf(context),
+                                    style: IconButton.styleFrom(
+                                      backgroundColor: MobiusColors.accentOf(
+                                        context,
+                                      ),
+                                    ),
+                                    icon: Icon(
+                                      _state == OfflinePlayerState.playing
+                                          ? Icons.pause
+                                          : Icons.play_arrow,
+                                    ),
+                                  ),
+                                ),
+
+                                const SizedBox(width: 16),
+
+                                IconButton(
+                                  tooltip: 'Next',
+                                  onPressed:
+                                      widget.playerController.queueLength > 0
+                                      ? _next
+                                      : null,
+                                  iconSize: 28,
+                                  color: MobiusColors.textOf(context),
+                                  icon: const Icon(Icons.skip_next),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 20),
+
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                IconButton(
+                                  tooltip: _repeatLabel(),
+                                  onPressed: _cycleRepeatMode,
+                                  color:
+                                      _repeatMode == OfflinePlayerRepeatMode.off
+                                      ? MobiusColors.textDimOf(context)
+                                      : MobiusColors.accentLightOf(context),
+                                  icon: Icon(_repeatIcon()),
+                                ),
+
+                                const SizedBox(width: 12),
+
+                                OutlinedButton.icon(
+                                  onPressed: _toggleQueue,
+                                  icon: const Icon(Icons.queue_music, size: 18),
+                                  label: const Text('Queue'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: MobiusColors.textOf(
+                                      context,
+                                    ),
+                                    side: BorderSide(
+                                      color: MobiusColors.borderOf(context),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            const SizedBox(height: 16),
+
+                            Text(
+                              switch (_state) {
+                                OfflinePlayerState.playing => 'Playing',
+                                OfflinePlayerState.paused => 'Paused',
+                                OfflinePlayerState.loaded => 'Loaded',
+                                OfflinePlayerState.stopped => 'Stopped',
+                                OfflinePlayerState.idle => 'Idle',
+                              },
+                              style: TextStyle(
+                                color: MobiusColors.textDimOf(context),
                                 fontSize: 12,
-                                fontFeatures: [
-                                  FontFeature.tabularFigures(),
-                                ],
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ),
-
-                    const SizedBox(
-                      height: 20,
-                    ),
-
-                    Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          tooltip: 'Previous',
-                          onPressed:
-                              widget.playerController
-                                          .queueLength >
-                                      0
-                                  ? _previous
-                                  : null,
-                          iconSize: 28,
-                          color:
-                              const Color(
-                            0xFFEDEDED,
-                          ),
-                          icon: const Icon(
-                            Icons.skip_previous,
-                          ),
-                        ),
-
-                        const SizedBox(
-                          width: 16,
-                        ),
-
-                        SizedBox(
-                          width: 64,
-                          height: 64,
-                          child: IconButton(
-                            tooltip:
-                                _state ==
-                                        OfflinePlayerState
-                                            .playing
-                                    ? 'Pause'
-                                    : 'Play',
-                            onPressed:
-                                _togglePlayback,
-                            iconSize: 38,
-                            color:
-                                const Color(
-                              0xFFFAFAFA,
-                            ),
-                            style:
-                                IconButton.styleFrom(
-                              backgroundColor:
-                                  const Color(
-                                0xFF8A63D2,
-                              ),
-                            ),
-                            icon: Icon(
-                              _state ==
-                                      OfflinePlayerState
-                                          .playing
-                                  ? Icons.pause
-                                  : Icons.play_arrow,
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(
-                          width: 16,
-                        ),
-
-                        IconButton(
-                          tooltip: 'Next',
-                          onPressed:
-                              widget.playerController
-                                          .queueLength >
-                                      0
-                                  ? _next
-                                  : null,
-                          iconSize: 28,
-                          color:
-                              const Color(
-                            0xFFEDEDED,
-                          ),
-                          icon: const Icon(
-                            Icons.skip_next,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(
-                      height: 20,
-                    ),
-
-                    Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.center,
-                      children: [
-                        IconButton(
-                          tooltip:
-                              _repeatLabel(),
-                          onPressed:
-                              _cycleRepeatMode,
-                          color:
-                              _repeatMode ==
-                                      OfflinePlayerRepeatMode
-                                          .off
-                                  ? const Color(
-                                      0xFF9A9A9A,
-                                    )
-                                  : const Color(
-                                      0xFFC4A8F0,
-                                    ),
-                          icon: Icon(
-                            _repeatIcon(),
-                          ),
-                        ),
-
-                        const SizedBox(
-                          width: 12,
-                        ),
-
-                        OutlinedButton.icon(
-                          onPressed:
-                              _toggleQueue,
-                          icon: const Icon(
-                            Icons.queue_music,
-                            size: 18,
-                          ),
-                          label: const Text(
-                            'Queue',
-                          ),
-                          style:
-                              OutlinedButton.styleFrom(
-                            foregroundColor:
-                                const Color(
-                              0xFFEDEDED,
-                            ),
-                            side:
-                                const BorderSide(
-                              color: Color(
-                                0xFF2A2A2A,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(
-                      height: 16,
-                    ),
-
-                    Text(
-                      switch (_state) {
-                        OfflinePlayerState.playing =>
-                          'Playing',
-                        OfflinePlayerState.paused =>
-                          'Paused',
-                        OfflinePlayerState.loaded =>
-                          'Loaded',
-                        OfflinePlayerState.stopped =>
-                          'Stopped',
-                        OfflinePlayerState.idle =>
-                          'Idle',
-                      },
-                      style: const TextStyle(
-                        color:
-                            Color(0xFF9A9A9A),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+                    );
+                  },
                 ),
               ),
-            );
-          },
-              ),
-            ),
 
-            if (_queueOpen) ...[
-              _QueueResizeHandle(
-                onDragUpdate: _resizeQueue,
-              ),
+              if (_queueOpen) ...[
+                _QueueResizeHandle(onDragUpdate: _resizeQueue),
 
-              SizedBox(
-                width: _queueWidth,
-                child: QueuePanel(
-                  repository: widget.repository,
-                  playerController:
-                      widget.playerController,
-                  onTrackSelected: _syncPlayer,
-                  onClose: _toggleQueue,
+                SizedBox(
+                  width: _queueWidth,
+                  child: QueuePanel(
+                    repository: widget.repository,
+                    playerController: widget.playerController,
+                    onTrackSelected: _syncPlayer,
+                    onClose: _toggleQueue,
+                  ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
-      ),
       ),
     );
   }
 }
-
 
 class _SeekBar extends StatefulWidget {
   const _SeekBar({
@@ -910,10 +781,7 @@ class _SeekBarState extends State<_SeekBar> {
     }
 
     setState(() {
-      _hoverValue = _valueFromPosition(
-        event.localPosition.dx,
-        width,
-      );
+      _hoverValue = _valueFromPosition(event.localPosition.dx, width);
     });
   }
 
@@ -922,28 +790,25 @@ class _SeekBarState extends State<_SeekBar> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        final previewValue =
-            _dragging ? widget.value : _hoverValue;
+        final previewValue = _dragging ? widget.value : _hoverValue;
 
-        final showPreview =
-            widget.enabled && previewValue != null;
+        final showPreview = widget.enabled && previewValue != null;
 
         final previewFraction = showPreview
-            ? (previewValue / widget.duration)
-                .clamp(0.0, 1.0)
+            ? (previewValue / widget.duration).clamp(0.0, 1.0)
             : 0.0;
 
         const tooltipWidth = 68.0;
-        final tooltipLeft =
-            (previewFraction * width - tooltipWidth / 2)
-                .clamp(0.0, width - tooltipWidth);
+        final tooltipLeft = (previewFraction * width - tooltipWidth / 2).clamp(
+          0.0,
+          width - tooltipWidth,
+        );
 
         return MouseRegion(
           cursor: widget.enabled
               ? SystemMouseCursors.click
               : SystemMouseCursors.basic,
-          onHover: (event) =>
-              _updateHover(event, width),
+          onHover: (event) => _updateHover(event, width),
           onExit: (_) {
             if (!_dragging && mounted) {
               setState(() {
@@ -961,46 +826,35 @@ class _SeekBarState extends State<_SeekBar> {
                   child: SliderTheme(
                     data: SliderTheme.of(context).copyWith(
                       trackHeight: 4,
-                      thumbShape:
-                          const RoundSliderThumbShape(
+                      thumbShape: const RoundSliderThumbShape(
                         enabledThumbRadius: 6,
                       ),
-                      overlayShape:
-                          const RoundSliderOverlayShape(
+                      overlayShape: const RoundSliderOverlayShape(
                         overlayRadius: 14,
                       ),
-                      activeTrackColor:
-                          const Color(0xFF8A63D2),
-                      inactiveTrackColor:
-                          const Color(0xFF2A2A2A),
-                      thumbColor:
-                          const Color(0xFFC4A8F0),
-                      overlayColor:
-                          const Color(0x338A63D2),
+                      activeTrackColor: MobiusColors.accentOf(context),
+                      inactiveTrackColor: MobiusColors.borderOf(context),
+                      thumbColor: MobiusColors.accentLightOf(context),
+                      overlayColor: MobiusColors.accentOf(
+                        context,
+                      ).withValues(alpha: 0.2),
                     ),
                     child: Slider(
                       min: 0,
-                      max: widget.duration > 0
-                          ? widget.duration
-                          : 1,
+                      max: widget.duration > 0 ? widget.duration : 1,
                       value: widget.value.clamp(
                         0.0,
-                        widget.duration > 0
-                            ? widget.duration
-                            : 1,
+                        widget.duration > 0 ? widget.duration : 1,
                       ),
                       onChangeStart: widget.enabled
                           ? (_) {
                               setState(() {
                                 _dragging = true;
-                                _hoverValue =
-                                    widget.value;
+                                _hoverValue = widget.value;
                               });
                             }
                           : null,
-                      onChanged: widget.enabled
-                          ? widget.onChanged
-                          : null,
+                      onChanged: widget.enabled ? widget.onChanged : null,
                       onChangeEnd: widget.enabled
                           ? (value) {
                               widget.onChangeEnd(value);
@@ -1022,9 +876,7 @@ class _SeekBarState extends State<_SeekBar> {
                     bottom: 30,
                     child: IgnorePointer(
                       child: _SeekTooltip(
-                        text: widget.formatTime(
-                          previewValue,
-                        ),
+                        text: widget.formatTime(previewValue),
                       ),
                     ),
                   ),
@@ -1038,14 +890,13 @@ class _SeekBarState extends State<_SeekBar> {
 }
 
 class _SeekTooltip extends StatelessWidget {
-  const _SeekTooltip({
-    required this.text,
-  });
+  const _SeekTooltip({required this.text});
 
   final String text;
 
   @override
   Widget build(BuildContext context) {
+    final scrim = MobiusColors.scrimOf(context);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1054,24 +905,22 @@ class _SeekTooltip extends StatelessWidget {
           height: 36,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: const Color(0xFF2A2A2A),
+            color: scrim,
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
             text,
-            style: const TextStyle(
-              color: Color(0xFFFAFAFA),
+            style: TextStyle(
+              color: MobiusColors.onScrimOf(context),
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              fontFeatures: [
-                FontFeature.tabularFigures(),
-              ],
+              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ),
         CustomPaint(
           size: const Size(10, 6),
-          painter: _SeekTooltipArrowPainter(),
+          painter: _SeekTooltipArrowPainter(color: scrim),
         ),
       ],
     );
@@ -1079,6 +928,10 @@ class _SeekTooltip extends StatelessWidget {
 }
 
 class _SeekTooltipArrowPainter extends CustomPainter {
+  _SeekTooltipArrowPainter({required this.color});
+
+  final Color color;
+
   @override
   void paint(Canvas canvas, Size size) {
     final path = Path()
@@ -1087,15 +940,12 @@ class _SeekTooltipArrowPainter extends CustomPainter {
       ..lineTo(size.width, 0)
       ..close();
 
-    canvas.drawPath(
-      path,
-      Paint()..color = const Color(0xFF2A2A2A),
-    );
+    canvas.drawPath(path, Paint()..color = color);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
+  bool shouldRepaint(covariant _SeekTooltipArrowPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 
@@ -1114,41 +964,29 @@ class _TechnicalInfo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment:
-          MainAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(
-          formatSampleRate(
-            technicalInfo.sampleRate,
-          ),
-          style: const TextStyle(
-            color: Color(0xFFEDEDED),
+          formatSampleRate(technicalInfo.sampleRate),
+          style: TextStyle(
+            color: MobiusColors.textOf(context),
             fontSize: 13,
-            fontFeatures: [
-              FontFeature.tabularFigures(),
-            ],
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(width: 16),
         Text(
           '${technicalInfo.bitsPerSample}-bit',
-          style: const TextStyle(
-            color: Color(0xFFEDEDED),
+          style: TextStyle(
+            color: MobiusColors.textOf(context),
             fontSize: 13,
-            fontFeatures: [
-              FontFeature.tabularFigures(),
-            ],
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(width: 16),
         Text(
-          formatChannels(
-            technicalInfo.channels,
-          ),
-          style: const TextStyle(
-            color: Color(0xFFEDEDED),
-            fontSize: 13,
-          ),
+          formatChannels(technicalInfo.channels),
+          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 13),
         ),
       ],
     );
@@ -1156,69 +994,54 @@ class _TechnicalInfo extends StatelessWidget {
 }
 
 class _AudioOutputInfo extends StatelessWidget {
-  const _AudioOutputInfo({
-    required this.decision,
-  });
+  const _AudioOutputInfo({required this.decision});
 
   final AudioOutputDecision decision;
 
   @override
   Widget build(BuildContext context) {
-    final status =
-        audioPlaybackStatusLabel(
-      decision.status,
-    );
+    final status = audioPlaybackStatusLabel(decision.status);
 
-    final statusColor =
-        decision.isNative
-            ? const Color(0xFF7FD99A)
-            : const Color(0xFFE8B74A);
+    final statusColor = decision.isNative
+        ? MobiusColors.native
+        : MobiusColors.compatible;
 
     return Row(
-      mainAxisAlignment:
-          MainAxisAlignment.center,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text(
+        Text(
           'SOURCE',
           style: TextStyle(
-            color: Color(0xFF9A9A9A),
+            color: MobiusColors.textDimOf(context),
             fontSize: 10,
             letterSpacing: 0.8,
           ),
         ),
         const SizedBox(width: 6),
         Text(
-          formatSampleRate(
-            decision.sourceRate,
-          ),
-          style: const TextStyle(
-            color: Color(0xFFEDEDED),
+          formatSampleRate(decision.sourceRate),
+          style: TextStyle(
+            color: MobiusColors.textOf(context),
             fontSize: 12,
-            fontFeatures: [
-              FontFeature.tabularFigures(),
-            ],
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(width: 20),
-        const Text(
+        Text(
           'OUTPUT',
           style: TextStyle(
-            color: Color(0xFF9A9A9A),
+            color: MobiusColors.textDimOf(context),
             fontSize: 10,
             letterSpacing: 0.8,
           ),
         ),
         const SizedBox(width: 6),
         Text(
-          formatSampleRate(
-            decision.effectiveRate,
-          ),
-          style: const TextStyle(
-            color: Color(0xFFEDEDED),
+          formatSampleRate(decision.effectiveRate),
+          style: TextStyle(
+            color: MobiusColors.textOf(context),
             fontSize: 12,
-            fontFeatures: [
-              FontFeature.tabularFigures(),
-            ],
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
         const SizedBox(width: 8),
@@ -1236,10 +1059,7 @@ class _AudioOutputInfo extends StatelessWidget {
 }
 
 class _Artwork extends StatelessWidget {
-  const _Artwork({
-    required this.size,
-    required this.image,
-  });
+  const _Artwork({required this.size, required this.image});
 
   final double size;
   final ImageProvider? image;
@@ -1250,11 +1070,9 @@ class _Artwork extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
+        color: MobiusColors.panelOf(context),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: const Color(0xFF2A2A2A),
-        ),
+        border: Border.all(color: MobiusColors.borderOf(context)),
       ),
       clipBehavior: Clip.antiAlias,
       child: image != null
@@ -1263,31 +1081,28 @@ class _Artwork extends StatelessWidget {
               fit: BoxFit.cover,
               filterQuality: FilterQuality.high,
               errorBuilder: (_, __, ___) {
-                return const Center(
+                return Center(
                   child: Icon(
                     Icons.music_note,
                     size: 72,
-                    color: Color(0xFF6A3FC0),
+                    color: MobiusColors.accentOf(context),
                   ),
                 );
               },
             )
-          : const Center(
+          : Center(
               child: Icon(
                 Icons.music_note,
                 size: 72,
-                color: Color(0xFF6A3FC0),
+                color: MobiusColors.accentOf(context),
               ),
             ),
     );
   }
 }
 
-
 class _QueueResizeHandle extends StatelessWidget {
-  const _QueueResizeHandle({
-    required this.onDragUpdate,
-  });
+  const _QueueResizeHandle({required this.onDragUpdate});
 
   final ValueChanged<DragUpdateDetails> onDragUpdate;
 
@@ -1305,7 +1120,7 @@ class _QueueResizeHandle extends StatelessWidget {
             child: Container(
               width: 1,
               height: double.infinity,
-              color: const Color(0xFF2A2A2A),
+              color: MobiusColors.borderOf(context),
             ),
           ),
         ),

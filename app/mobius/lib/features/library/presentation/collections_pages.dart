@@ -3,16 +3,13 @@ import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/colors.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../data/ffi_library_repository.dart';
 import '../data/user_collections.dart';
 import 'track_context_menu.dart';
 
-const _ink = Color(0xFFEDEDED);
-const _muted = Color(0xFF9A9A9A);
-const _panel = Color(0xFF1A1A1A);
-const _accent = Color(0xFFB58AF4);
 const _favoritesCollectionId = '\u0000mobius_favorites';
 
 class PlaylistsPage extends StatefulWidget {
@@ -212,12 +209,12 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
           const SizedBox(height: 8),
           Text(
             '${_playlists.length} ${_playlists.length == 1 ? 'playlist' : 'playlists'}',
-            style: const TextStyle(color: _muted),
+            style: TextStyle(color: MobiusColors.textDimOf(context)),
           ),
           if (_creating) ...[
             const SizedBox(height: 16),
             Material(
-              color: _panel,
+              color: MobiusColors.panelOf(context),
               borderRadius: BorderRadius.circular(10),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
@@ -355,8 +352,8 @@ class _PlaylistCard extends StatelessWidget {
                                       begin: Alignment.topLeft,
                                       end: Alignment.bottomRight,
                                       colors: [
-                                        Color(0xFF57417E),
-                                        Color(0xFF201C2A),
+                                        MobiusColors.heroGradientTop,
+                                        MobiusColors.heroGradientBottom,
                                       ],
                                     ),
                                   ),
@@ -416,12 +413,12 @@ class _PlaylistCard extends StatelessWidget {
             name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _ink, fontWeight: FontWeight.w600),
+            style: TextStyle(color: MobiusColors.textOf(context), fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 4),
           Text(
             '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
-            style: const TextStyle(color: _muted),
+            style: TextStyle(color: MobiusColors.textDimOf(context)),
           ),
         ],
       ),
@@ -438,7 +435,7 @@ class _FavoritesPlaceholder extends StatelessWidget {
       gradient: LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [Color(0xFF57417E), Color(0xFF201C2A)],
+        colors: [MobiusColors.heroGradientTop, MobiusColors.heroGradientBottom],
       ),
     ),
     child: Center(
@@ -450,7 +447,7 @@ class _FavoritesPlaceholder extends StatelessWidget {
             children: [
               Icon(
                 Icons.favorite_rounded,
-                color: const Color(0xFFB58AF4),
+                color: MobiusColors.accentOf(context),
                 size: size * 0.34,
               ),
             ],
@@ -611,15 +608,15 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
                 icon: const Icon(Icons.play_arrow_rounded),
                 label: const Text('Play'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF8A63D2),
-                  foregroundColor: Colors.white,
+                  backgroundColor: MobiusColors.accentOf(context),
+                  foregroundColor: MobiusColors.onAccentOf(context),
                   minimumSize: const Size(104, 44),
                 ),
               ),
               const SizedBox(width: 12),
               Text(
                 '${_tracks.length} ${_tracks.length == 1 ? 'song' : 'songs'}',
-                style: const TextStyle(color: _muted, fontSize: 13),
+                style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
               ),
             ],
           ),
@@ -628,9 +625,9 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
           padding: const EdgeInsets.fromLTRB(32, 18, 32, 12),
           child: _PlaylistTableHeader(),
         ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 32),
-          child: Divider(height: 1, color: Color(0xFF2A2A2A)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Divider(height: 1, color: MobiusColors.borderOf(context)),
         ),
         if (_tracks.isEmpty)
           Expanded(
@@ -639,7 +636,7 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
                 widget.isFavorites
                     ? 'Favorite a track from your library to see it here.'
                     : 'Add tracks from your library using the playlist menu.',
-                style: TextStyle(color: _muted),
+                style: TextStyle(color: MobiusColors.textDimOf(context)),
               ),
             ),
           )
@@ -712,7 +709,11 @@ class _PlaylistHero extends StatelessWidget {
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Color(0xFF493273), Color(0xFF302344), Color(0x001A1A1A)],
+        colors: [
+          MobiusColors.heroCoverTop,
+          MobiusColors.heroCoverMid,
+          MobiusColors.heroCoverFade,
+        ],
         stops: [0, 0.62, 1],
       ),
     ),
@@ -730,7 +731,7 @@ class _PlaylistHero extends StatelessWidget {
             Text(
               isFavorites ? 'SAVED MUSIC' : 'PLAYLIST',
               style: TextStyle(
-                color: Color(0xFFE4D7FF),
+                color: MobiusColors.onHeroLabel,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 1.4,
@@ -756,7 +757,7 @@ class _PlaylistHero extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        color: _ink,
+                        color: MobiusColors.onHeroPrimary,
                         fontSize: 44,
                         height: 1.05,
                         fontWeight: FontWeight.w700,
@@ -765,7 +766,7 @@ class _PlaylistHero extends StatelessWidget {
                     const SizedBox(height: 14),
                     Text(
                       'Mobius  •  $trackCount ${trackCount == 1 ? 'song' : 'songs'}',
-                      style: const TextStyle(color: Color(0xFFD0C8D9)),
+                      style: const TextStyle(color: MobiusColors.onHeroMuted),
                     ),
                   ],
                 ),
@@ -808,7 +809,10 @@ class _PlaylistCover extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [Color(0xFF8055C7), Color(0xFF33234E)],
+                      colors: [
+                        MobiusColors.favoritesGradientTop,
+                        MobiusColors.favoritesGradientBottom,
+                      ],
                     ),
                   ),
                   child: Icon(
@@ -882,7 +886,7 @@ class _PlaylistTrackRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Material(
-        color: isCurrent ? const Color(0xFF30263C) : Colors.transparent,
+        color: isCurrent ? MobiusColors.panelOf(context) : Colors.transparent,
         borderRadius: BorderRadius.circular(4),
         child: InkWell(
           onTap: onPlay,
@@ -901,17 +905,19 @@ class _PlaylistTrackRow extends StatelessWidget {
                         if (isReorderable)
                           ReorderableDragStartListener(
                             index: index,
-                            child: const Icon(
+                            child: Icon(
                               Icons.drag_handle_rounded,
                               size: 17,
-                              color: _muted,
+                              color: MobiusColors.textDimOf(context),
                             ),
                           ),
                         const SizedBox(width: 5),
                         Text(
                           '${index + 1}',
                           style: TextStyle(
-                            color: isCurrent ? _accent : _muted,
+                            color: isCurrent
+                                ? MobiusColors.accentOf(context)
+                                : MobiusColors.textDimOf(context),
                             fontSize: 13,
                             fontFamily: 'monospace',
                           ),
@@ -929,11 +935,11 @@ class _PlaylistTrackRow extends StatelessWidget {
                             width: 48,
                             height: 48,
                             child: artwork == null
-                                ? const ColoredBox(
-                                    color: Color(0xFF292631),
+                                ? ColoredBox(
+                                    color: MobiusColors.panelOf(context),
                                     child: Icon(
                                       Icons.music_note_rounded,
-                                      color: _muted,
+                                      color: MobiusColors.textDimOf(context),
                                     ),
                                   )
                                 : Image(
@@ -956,7 +962,7 @@ class _PlaylistTrackRow extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  color: _ink,
+                                  color: MobiusColors.textOf(context),
                                   fontSize: 14,
                                   fontWeight: isCurrent
                                       ? FontWeight.w600
@@ -970,8 +976,8 @@ class _PlaylistTrackRow extends StatelessWidget {
                                     : track.artist,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: _muted,
+                                style: TextStyle(
+                                  color: MobiusColors.textDimOf(context),
                                   fontSize: 12,
                                 ),
                               ),
@@ -990,7 +996,7 @@ class _PlaylistTrackRow extends StatelessWidget {
                           : track.album,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: _muted, fontSize: 13),
+                      style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
                     ),
                   ),
                   const SizedBox(width: 28),
@@ -1001,8 +1007,8 @@ class _PlaylistTrackRow extends StatelessWidget {
                           ? '--'
                           : _formatPlaylistDuration(duration!),
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: _muted,
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 12,
                         fontFamily: 'monospace',
                       ),
@@ -1016,8 +1022,8 @@ class _PlaylistTrackRow extends StatelessWidget {
                           ? '--'
                           : '${(sampleRate! / 1000).toStringAsFixed(sampleRate! % 1000 == 0 ? 0 : 1)} kHz',
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: _muted,
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 12,
                         fontFamily: 'monospace',
                       ),
@@ -1048,8 +1054,8 @@ class _CollectionHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Text(
     title,
-    style: const TextStyle(
-      color: _ink,
+    style: TextStyle(
+      color: MobiusColors.textOf(context),
       fontSize: 42,
       fontWeight: FontWeight.w600,
     ),
@@ -1063,7 +1069,7 @@ class _TableLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      Text(text, style: const TextStyle(color: _muted, fontSize: 13));
+      Text(text, style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13));
 }
 
 void _showCollectionError(BuildContext context, Object error) {

@@ -427,11 +427,12 @@ pub fn available_virtual_formats(
 
     let item_count = data_size as usize / item_size;
 
-    let mut formats = Vec::<AudioStreamRangedDescription>::with_capacity(item_count);
-
-    unsafe {
-        formats.set_len(item_count);
-    }
+    // Zero-initialise: CoreAudio may fill fewer bytes than it announced, and
+    // the tail must never be read as uninitialised memory. The struct is
+    // plain-old-data (f64/u32 fields), so all-zero is a valid value.
+    let mut formats: Vec<AudioStreamRangedDescription> = (0..item_count)
+        .map(|_| unsafe { std::mem::zeroed() })
+        .collect();
 
     let mut actual_size = data_size;
 

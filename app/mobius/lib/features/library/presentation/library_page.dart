@@ -6,6 +6,7 @@ import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../data/ffi_library_repository.dart';
 import '../data/user_collections.dart';
+import '../../../playback/playback_time_format.dart';
 import 'track_context_menu.dart';
 
 class LibraryPage extends StatefulWidget {
@@ -40,6 +41,10 @@ class LibraryPage extends StatefulWidget {
 
 class _LibraryPageState extends State<LibraryPage> {
   final List<TrackMetadata> _tracks = [];
+  // Bumped whenever _tracks is mutated; part of the _visibleTracks cache key.
+  int _tracksVersion = 0;
+  Object? _visibleTracksKey;
+  List<TrackMetadata>? _visibleTracksCache;
 
   String _searchQuery = '';
   String? _genreFilter;
@@ -92,6 +97,7 @@ class _LibraryPageState extends State<LibraryPage> {
       _tracks
         ..clear()
         ..addAll(tracks);
+      _tracksVersion++;
 
       if (mounted) {
         setState(() {
@@ -109,6 +115,20 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   List<TrackMetadata> get _visibleTracks {
+    // Filtering + sorting the whole library is read several times per
+    // build; recompute only when an input actually changed.
+    final key = (
+      _tracksVersion,
+      _searchQuery,
+      _genreFilter,
+      _sort,
+      _sortAscending,
+    );
+    final cached = _visibleTracksCache;
+    if (cached != null && key == _visibleTracksKey) {
+      return cached;
+    }
+
     final query = _searchQuery.trim().toLowerCase();
 
     bool matches(TrackMetadata track) {
@@ -133,8 +153,7 @@ class _LibraryPageState extends State<LibraryPage> {
       return haystack.contains(query);
     }
 
-    final result = _tracks.where(matches).toList(growable: false);
-    final sorted = List<TrackMetadata>.from(result);
+    final sorted = _tracks.where(matches).toList(growable: false);
 
     int compare(TrackMetadata a, TrackMetadata b) {
       String value(TrackMetadata track) {
@@ -155,6 +174,8 @@ class _LibraryPageState extends State<LibraryPage> {
     }
 
     sorted.sort(compare);
+    _visibleTracksKey = key;
+    _visibleTracksCache = sorted;
     return sorted;
   }
 
@@ -181,7 +202,7 @@ class _LibraryPageState extends State<LibraryPage> {
     });
   }
 
-  void _playTrack(TrackMetadata track) {
+  Future<void> _playTrack(TrackMetadata track) async {
     try {
       final visibleTracks = _visibleTracks;
       final queueIds = visibleTracks.map((item) => item.trackId).toList();
@@ -194,7 +215,7 @@ class _LibraryPageState extends State<LibraryPage> {
         return;
       }
 
-      widget.playerController.selectAndPlay(index);
+      await widget.playerController.selectAndPlay(index);
 
       if (mounted) {
         setState(() {});
@@ -211,7 +232,10 @@ class _LibraryPageState extends State<LibraryPage> {
       await widget.collections.removeFromLibrary(track.trackId);
     }
     if (!mounted) return;
-    setState(() => _tracks.removeWhere((item) => item.trackId == track.trackId));
+    setState(() {
+      _tracks.removeWhere((item) => item.trackId == track.trackId);
+      _tracksVersion++;
+    });
     widget.onLibraryChanged();
   }
 
@@ -260,10 +284,10 @@ class _LibraryPageState extends State<LibraryPage> {
         children: [
           Text(
             widget.favoritesOnly ? 'Favorites' : 'Library',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 42,
               fontWeight: FontWeight.w600,
-              color: Color(0xFFEDEDED),
+              color: MobiusColors.textOf(context),
             ),
           ),
           const SizedBox(height: 8),
@@ -273,13 +297,16 @@ class _LibraryPageState extends State<LibraryPage> {
                 : _hasFilters
                 ? '${_visibleTracks.length} of ${_tracks.length} tracks'
                 : '${_tracks.length} tracks',
-            style: const TextStyle(fontSize: 17, color: Color(0xFF9A9A9A)),
+            style: TextStyle(
+              fontSize: 17,
+              color: MobiusColors.textDimOf(context),
+            ),
           ),
           const SizedBox(height: 24),
           _buildSearchAndFilters(),
           const SizedBox(height: 20),
           _buildTableHeader(),
-          const Divider(height: 1, color: Color(0xFF2A2A2A)),
+          Divider(height: 1, color: MobiusColors.borderOf(context)),
           const SizedBox(height: 4),
           Expanded(child: _buildTrackList()),
         ],
@@ -298,43 +325,54 @@ class _LibraryPageState extends State<LibraryPage> {
                 onChanged: (value) {
                   setState(() => _searchQuery = value);
                 },
-                style: const TextStyle(color: MobiusColors.text, fontSize: 14),
+                style: TextStyle(
+                  color: MobiusColors.textOf(context),
+                  fontSize: 14,
+                ),
                 decoration: InputDecoration(
                   hintText: 'Search tracks, artists, albums...',
-                  hintStyle: const TextStyle(
-                    color: Color(0xFF777777),
+                  hintStyle: TextStyle(
+                    color: MobiusColors.textDimOf(context),
                     fontSize: 14,
                   ),
-                  prefixIcon: const Icon(
+                  prefixIcon: Icon(
                     Icons.search_rounded,
                     size: 19,
-                    color: Color(0xFF8C8C8C),
+                    color: MobiusColors.textDimOf(context),
                   ),
                   suffixIcon: _searchQuery.isEmpty
                       ? null
                       : IconButton(
                           tooltip: 'Clear search',
                           icon: const Icon(Icons.close_rounded, size: 18),
-                          color: MobiusColors.textDim,
+                          color: MobiusColors.textDimOf(context),
                           onPressed: () => setState(() => _searchQuery = ''),
                         ),
                   filled: true,
-                  fillColor: MobiusColors.panel.withValues(alpha: 0.82),
+                  fillColor: MobiusColors.panelOf(
+                    context,
+                  ).withValues(alpha: 0.82),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 13,
                   ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: MobiusColors.border),
+                    borderSide: BorderSide(
+                      color: MobiusColors.borderOf(context),
+                    ),
                   ),
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: MobiusColors.border),
+                    borderSide: BorderSide(
+                      color: MobiusColors.borderOf(context),
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: MobiusColors.purple),
+                    borderSide: BorderSide(
+                      color: MobiusColors.accentOf(context),
+                    ),
                   ),
                 ),
               ),
@@ -370,8 +408,8 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget _buildGenreChip(String label, bool selected, String? value) {
     return Material(
       color: selected
-          ? MobiusColors.violetMuted.withValues(alpha: 0.92)
-          : MobiusColors.panel.withValues(alpha: 0.76),
+          ? MobiusColors.accentOf(context).withValues(alpha: 0.22)
+          : MobiusColors.panelOf(context).withValues(alpha: 0.76),
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
@@ -382,7 +420,9 @@ class _LibraryPageState extends State<LibraryPage> {
             child: Text(
               label,
               style: TextStyle(
-                color: selected ? MobiusColors.text : MobiusColors.textDim,
+                color: selected
+                    ? MobiusColors.textOf(context)
+                    : MobiusColors.textDimOf(context),
                 fontSize: 12,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
               ),
@@ -396,28 +436,33 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget _buildSortMenu() {
     return PopupMenuButton<_LibrarySortAction>(
       tooltip: 'Sort library',
-      color: MobiusColors.panel,
+      color: MobiusColors.panelOf(context),
       onSelected: (action) {
         if (action.sort != null) {
           _setSort(action.sort!);
         }
       },
       itemBuilder: (context) => [
-        const PopupMenuItem<_LibrarySortAction>(
+        PopupMenuItem<_LibrarySortAction>(
           enabled: false,
           child: Text(
             'Sort by',
             style: TextStyle(
-              color: MobiusColors.text,
+              color: MobiusColors.textOf(context),
               fontWeight: FontWeight.w600,
             ),
           ),
         ),
         ...[
-          _sortMenuItem(_LibrarySort.title, 'Title', true),
-          _sortMenuItem(_LibrarySort.artist, 'Artist', true),
-          _sortMenuItem(_LibrarySort.album, 'Album', true),
-          _sortMenuItem(_LibrarySort.releaseDate, 'Release date', true),
+          _sortMenuItem(context, _LibrarySort.title, 'Title', true),
+          _sortMenuItem(context, _LibrarySort.artist, 'Artist', true),
+          _sortMenuItem(context, _LibrarySort.album, 'Album', true),
+          _sortMenuItem(
+            context,
+            _LibrarySort.releaseDate,
+            'Release date',
+            true,
+          ),
         ],
       ],
       child: _ToolbarButton(
@@ -431,6 +476,7 @@ class _LibraryPageState extends State<LibraryPage> {
   }
 
   PopupMenuItem<_LibrarySortAction> _sortMenuItem(
+    BuildContext context,
     _LibrarySort sort,
     String label,
     bool supported,
@@ -450,7 +496,9 @@ class _LibraryPageState extends State<LibraryPage> {
             child: Text(
               supported ? label : '$label (not available)',
               style: TextStyle(
-                color: supported ? MobiusColors.text : MobiusColors.textDim,
+                color: supported
+                    ? MobiusColors.textOf(context)
+                    : MobiusColors.textDimOf(context),
               ),
             ),
           ),
@@ -460,7 +508,7 @@ class _LibraryPageState extends State<LibraryPage> {
                   ? Icons.arrow_upward_rounded
                   : Icons.arrow_downward_rounded,
               size: 17,
-              color: MobiusColors.purple,
+              color: MobiusColors.accentOf(context),
             ),
         ],
       ),
@@ -483,15 +531,15 @@ class _LibraryPageState extends State<LibraryPage> {
   Widget _buildViewMenu() {
     return PopupMenuButton<bool>(
       tooltip: 'View as',
-      color: MobiusColors.panel,
+      color: MobiusColors.panelOf(context),
       onSelected: (compact) => setState(() => _compactView = compact),
       itemBuilder: (context) => [
-        const PopupMenuItem<bool>(
+        PopupMenuItem<bool>(
           enabled: false,
           child: Text(
             'View as',
             style: TextStyle(
-              color: MobiusColors.text,
+              color: MobiusColors.textOf(context),
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -566,7 +614,7 @@ class _LibraryPageState extends State<LibraryPage> {
         child: Text(
           _error!,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Color(0xFFE05A5A)),
+          style: const TextStyle(color: MobiusColors.unsupported),
         ),
       );
     }
@@ -577,7 +625,7 @@ class _LibraryPageState extends State<LibraryPage> {
       return Center(
         child: Text(
           widget.favoritesOnly ? 'No favorites yet' : 'No tracks found',
-          style: const TextStyle(color: Color(0xFF9A9A9A)),
+          style: TextStyle(color: MobiusColors.textDimOf(context)),
         ),
       );
     }
@@ -586,7 +634,7 @@ class _LibraryPageState extends State<LibraryPage> {
       return Center(
         child: Text(
           'No tracks match your filters',
-          style: const TextStyle(color: Color(0xFF9A9A9A)),
+          style: TextStyle(color: MobiusColors.textDimOf(context)),
         ),
       );
     }
@@ -660,24 +708,27 @@ class _ToolbarButton extends StatelessWidget {
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 11),
       decoration: BoxDecoration(
-        color: MobiusColors.panel.withValues(alpha: 0.82),
+        color: MobiusColors.panelOf(context).withValues(alpha: 0.82),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: MobiusColors.border),
+        border: Border.all(color: MobiusColors.borderOf(context)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 17, color: MobiusColors.textDim),
+          Icon(icon, size: 17, color: MobiusColors.textDimOf(context)),
           const SizedBox(width: 7),
           Text(
             label,
-            style: const TextStyle(color: MobiusColors.textDim, fontSize: 13),
+            style: TextStyle(
+              color: MobiusColors.textDimOf(context),
+              fontSize: 13,
+            ),
           ),
           const SizedBox(width: 6),
           Icon(
             trailing ?? Icons.keyboard_arrow_down_rounded,
             size: 16,
-            color: MobiusColors.textDim,
+            color: MobiusColors.textDimOf(context),
           ),
         ],
       ),
@@ -703,19 +754,27 @@ class _ViewMenuItem extends StatelessWidget {
         Icon(
           icon,
           size: 18,
-          color: selected ? MobiusColors.purple : MobiusColors.textDim,
+          color: selected
+              ? MobiusColors.accentOf(context)
+              : MobiusColors.textDimOf(context),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             label,
             style: TextStyle(
-              color: selected ? MobiusColors.text : MobiusColors.textDim,
+              color: selected
+                  ? MobiusColors.textOf(context)
+                  : MobiusColors.textDimOf(context),
             ),
           ),
         ),
         if (selected)
-          const Icon(Icons.check_rounded, size: 18, color: MobiusColors.purple),
+          Icon(
+            Icons.check_rounded,
+            size: 18,
+            color: MobiusColors.accentOf(context),
+          ),
       ],
     );
   }
@@ -751,7 +810,9 @@ class _LibraryTrackRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Material(
-        color: isCurrent ? const Color(0xFF30263C) : Colors.transparent,
+        color: isCurrent
+            ? MobiusColors.accentOf(context).withValues(alpha: 0.16)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(4),
         child: InkWell(
           onTap: onTap,
@@ -774,21 +835,21 @@ class _LibraryTrackRow extends StatelessWidget {
                               width: 3,
                               height: 30,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFB58AF4),
+                                color: MobiusColors.accentLightOf(context),
                                 borderRadius: BorderRadius.circular(2),
                               ),
                             ),
                           ),
                         isCurrent
-                            ? const Icon(
+                            ? Icon(
                                 Icons.equalizer_rounded,
                                 size: 18,
-                                color: Color(0xFFB58AF4),
+                                color: MobiusColors.accentLightOf(context),
                               )
                             : Text(
                                 '${index + 1}',
-                                style: const TextStyle(
-                                  color: Color(0xFF9A9A9A),
+                                style: TextStyle(
+                                  color: MobiusColors.textDimOf(context),
                                   fontSize: 13,
                                   fontFamily: 'monospace',
                                 ),
@@ -808,7 +869,7 @@ class _LibraryTrackRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: const Color(0xFFEDEDED),
+                            color: MobiusColors.textOf(context),
                             fontSize: compact ? 13 : 14,
                             fontWeight: isCurrent
                                 ? FontWeight.w600
@@ -821,7 +882,7 @@ class _LibraryTrackRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: const Color(0xFF9A9A9A),
+                            color: MobiusColors.textDimOf(context),
                             fontSize: compact ? 11 : 12,
                           ),
                         ),
@@ -835,8 +896,8 @@ class _LibraryTrackRow extends StatelessWidget {
                       album,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF9A9A9A),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 13,
                       ),
                     ),
@@ -847,8 +908,8 @@ class _LibraryTrackRow extends StatelessWidget {
                     child: Text(
                       duration != null ? _formatTime(duration!) : '--',
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: Color(0xFF9A9A9A),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 12,
                         fontFamily: 'monospace',
                       ),
@@ -862,8 +923,8 @@ class _LibraryTrackRow extends StatelessWidget {
                           ? _formatSampleRate(sampleRate!)
                           : '--',
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: Color(0xFF9A9A9A),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 12,
                         fontFamily: 'monospace',
                       ),
@@ -890,17 +951,7 @@ class _LibraryTrackRow extends StatelessWidget {
     return '${(rate / 1000).toStringAsFixed(1)} kHz';
   }
 
-  String _formatTime(double seconds) {
-    if (!seconds.isFinite || seconds < 0) {
-      return '00:00';
-    }
-
-    final total = seconds.floor();
-    final minutes = total ~/ 60;
-    final remaining = total % 60;
-
-    return '$minutes:${remaining.toString().padLeft(2, '0')}';
-  }
+  String _formatTime(double seconds) => formatPlaybackTime(seconds);
 }
 
 class _TableLabel extends StatelessWidget {
@@ -912,7 +963,7 @@ class _TableLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       text,
-      style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+      style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
     );
   }
 }

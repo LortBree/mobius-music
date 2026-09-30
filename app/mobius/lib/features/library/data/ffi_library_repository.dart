@@ -78,12 +78,7 @@ class FfiLibraryRepository implements LibraryRepository {
     final cached = _trackIds;
     if (cached != null) return cached;
 
-    final count = _player.getTrackCount();
-    final ids = List<int>.generate(
-      count,
-      _player.getTrackIdAt,
-      growable: false,
-    );
+    final ids = _player.getTrackIds();
     _trackIds = ids;
     return ids;
   }

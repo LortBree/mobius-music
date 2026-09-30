@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/colors.dart';
 import '../../../core/ffi/offline_player.dart';
 
 class LibraryTrackTile extends StatelessWidget {
@@ -20,12 +21,12 @@ class LibraryTrackTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: isCurrent
-          ? const Color(0xFF2A2A2A)
+          ? MobiusColors.borderOf(context)
           : Colors.transparent,
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        hoverColor: const Color(0xFF222222),
+        hoverColor: MobiusColors.panelOf(context),
         onTap: onTap,
         child: SizedBox(
           height: 56,
@@ -35,15 +36,15 @@ class LibraryTrackTile extends StatelessWidget {
                 width: 64,
                 child: Center(
                   child: isCurrent
-                      ? const Icon(
+                      ? Icon(
                           Icons.equalizer_rounded,
                           size: 19,
-                          color: Color(0xFF8A63D2),
+                          color: MobiusColors.accentOf(context),
                         )
                       : Text(
                           '${index + 1}',
-                          style: const TextStyle(
-                            color: Color(0xFF9A9A9A),
+                          style: TextStyle(
+                            color: MobiusColors.textDimOf(context),
                             fontSize: 14,
                           ),
                         ),
@@ -58,7 +59,7 @@ class LibraryTrackTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: const Color(0xFFEDEDED),
+                    color: MobiusColors.textOf(context),
                     fontSize: 15,
                     fontWeight: isCurrent
                         ? FontWeight.w600
@@ -74,8 +75,8 @@ class LibraryTrackTile extends StatelessWidget {
                       : track.artist,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF9A9A9A),
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
                     fontSize: 14,
                   ),
                 ),
@@ -88,8 +89,8 @@ class LibraryTrackTile extends StatelessWidget {
                       : track.album,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF9A9A9A),
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
                     fontSize: 14,
                   ),
                 ),

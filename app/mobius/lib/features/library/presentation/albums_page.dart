@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/colors.dart';
 import '../data/ffi_library_repository.dart';
 import '../../../playback/player_controller.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../data/user_collections.dart';
+import 'group_artwork.dart';
 import 'track_context_menu.dart';
 
 class AlbumsPage extends StatefulWidget {
@@ -37,13 +39,12 @@ class _AlbumEntry {
     required this.title,
     required this.artist,
     required this.trackIds,
-    required this.artwork,
-  });
+  }) : artwork = GroupArtworkSource(trackIds);
 
   final String title;
   final String artist;
   final List<int> trackIds;
-  final TrackArtwork? artwork;
+  final GroupArtworkSource artwork;
 }
 
 class _AlbumsPageState extends State<AlbumsPage> {
@@ -97,16 +98,6 @@ class _AlbumsPageState extends State<AlbumsPage> {
         );
 
         builder.trackIds.add(trackId);
-
-        if (builder.artwork == null) {
-          try {
-            final artwork = widget.repository.getTrackArtwork(trackId);
-
-            if (artwork != null && artwork.data.isNotEmpty) {
-              builder.artwork = artwork;
-            }
-          } catch (_) {}
-        }
       }
 
       final albums =
@@ -116,7 +107,6 @@ class _AlbumsPageState extends State<AlbumsPage> {
                   title: builder.title,
                   artist: builder.artist,
                   trackIds: List.unmodifiable(builder.trackIds),
-                  artwork: builder.artwork,
                 ),
               )
               .toList()
@@ -211,16 +201,16 @@ class _AlbumsPageState extends State<AlbumsPage> {
       return Center(
         child: Text(
           'Unable to load albums.',
-          style: const TextStyle(color: Color(0xFFEDEDED), fontSize: 15),
+          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 15),
         ),
       );
     }
 
     if (_albums.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           'No albums found.',
-          style: TextStyle(color: Color(0xFF9A9A9A), fontSize: 15),
+          style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 15),
         ),
       );
     }
@@ -229,13 +219,13 @@ class _AlbumsPageState extends State<AlbumsPage> {
       padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
       child: CustomScrollView(
         slivers: [
-          const SliverToBoxAdapter(
+          SliverToBoxAdapter(
             child: Text(
               'Albums',
               style: TextStyle(
                 fontSize: 42,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFEDEDED),
+                color: MobiusColors.textOf(context),
               ),
             ),
           ),
@@ -244,7 +234,11 @@ class _AlbumsPageState extends State<AlbumsPage> {
             delegate: SliverChildBuilderDelegate((context, index) {
               final album = _albums[index];
 
-              return _AlbumCard(album: album, onTap: () => _openAlbum(album));
+              return _AlbumCard(
+                album: album,
+                repository: widget.repository,
+                onTap: () => _openAlbum(album),
+              );
             }, childCount: _albums.length),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               maxCrossAxisExtent: 220,
@@ -265,19 +259,21 @@ class _AlbumBuilder {
   final String title;
   final String artist;
   final List<int> trackIds = [];
-  TrackArtwork? artwork;
 }
 
 class _AlbumCard extends StatelessWidget {
-  const _AlbumCard({required this.album, required this.onTap});
+  const _AlbumCard({
+    required this.album,
+    required this.repository,
+    required this.onTap,
+  });
 
   final _AlbumEntry album;
+  final LibraryRepository repository;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final artwork = album.artwork;
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -292,23 +288,17 @@ class _AlbumCard extends StatelessWidget {
                   aspectRatio: 1,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1A1A1A),
+                      color: MobiusColors.panelOf(context),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     clipBehavior: Clip.antiAlias,
-                    child: artwork != null && artwork.data.isNotEmpty
-                        ? Image.memory(
-                            artwork.data,
-                            cacheWidth: 440,
-                            cacheHeight: 440,
-                            fit: BoxFit.cover,
-                            filterQuality: FilterQuality.medium,
-                            gaplessPlayback: true,
-                            errorBuilder: (_, __, ___) {
-                              return const _ArtworkPlaceholder();
-                            },
-                        )
-                        : const _ArtworkPlaceholder(),
+                    child: GroupArtwork(
+                      repository: repository,
+                      source: album.artwork,
+                      decodeSize: 440,
+                      filterQuality: FilterQuality.medium,
+                      placeholder: const _ArtworkPlaceholder(),
+                    ),
                   ),
               ),
               const SizedBox(height: 12),
@@ -316,8 +306,8 @@ class _AlbumCard extends StatelessWidget {
                 album.title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFEDEDED),
+                style: TextStyle(
+                  color: MobiusColors.textOf(context),
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
@@ -327,7 +317,7 @@ class _AlbumCard extends StatelessWidget {
                 album.artist.isEmpty ? 'Unknown Artist' : album.artist,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+                style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
               ),
             ],
           ),
@@ -342,8 +332,8 @@ class _ArtworkPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Icon(Icons.album_outlined, size: 54, color: Color(0xFF6A3FC0)),
+    return Center(
+      child: Icon(Icons.album_outlined, size: 54, color: MobiusColors.accentOf(context)),
     );
   }
 }
@@ -380,8 +370,6 @@ class _AlbumDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final artwork = album.artwork;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 36, 24),
       child: Column(
@@ -395,10 +383,10 @@ class _AlbumDetailPage extends StatelessWidget {
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
               const SizedBox(width: 6),
-              const Text(
+              Text(
                 'ALBUM',
                 style: TextStyle(
-                  color: Color(0xFFC4A8F0),
+                  color: MobiusColors.accentLightOf(context),
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.4,
@@ -414,23 +402,18 @@ class _AlbumDetailPage extends StatelessWidget {
                 width: 220,
                 height: 220,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
+                  color: MobiusColors.panelOf(context),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: artwork != null && artwork.data.isNotEmpty
-                    ? Image.memory(
-                        artwork.data,
-                        cacheWidth: 960,
-                        cacheHeight: 960,
-                        fit: BoxFit.cover,
-                        filterQuality: FilterQuality.high,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) {
-                          return const _ArtworkPlaceholder();
-                        },
-                      )
-                    : const _ArtworkPlaceholder(),
+                // 220 logical px; 440 covers a 2x display.
+                child: GroupArtwork(
+                  repository: repository,
+                  source: album.artwork,
+                  decodeSize: 440,
+                  filterQuality: FilterQuality.high,
+                  placeholder: const _ArtworkPlaceholder(),
+                ),
               ),
               const SizedBox(width: 28),
               Expanded(
@@ -443,8 +426,8 @@ class _AlbumDetailPage extends StatelessWidget {
                         album.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFEDEDED),
+                        style: TextStyle(
+                          color: MobiusColors.textOf(context),
                           fontSize: 34,
                           fontWeight: FontWeight.w600,
                         ),
@@ -452,16 +435,16 @@ class _AlbumDetailPage extends StatelessWidget {
                       const SizedBox(height: 8),
                       Text(
                         album.artist.isEmpty ? 'Unknown Artist' : album.artist,
-                        style: const TextStyle(
-                          color: Color(0xFF9A9A9A),
+                        style: TextStyle(
+                          color: MobiusColors.textDimOf(context),
                           fontSize: 15,
                         ),
                       ),
                       const SizedBox(height: 18),
                       Text(
                         '${album.trackIds.length} tracks',
-                        style: const TextStyle(
-                          color: Color(0xFF9A9A9A),
+                        style: TextStyle(
+                          color: MobiusColors.textDimOf(context),
                           fontSize: 13,
                         ),
                       ),
@@ -471,8 +454,8 @@ class _AlbumDetailPage extends StatelessWidget {
                         icon: const Icon(Icons.play_arrow_rounded, size: 20),
                         label: const Text('Play Album'),
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF8A63D2),
-                          foregroundColor: const Color(0xFFFAFAFA),
+                          backgroundColor: MobiusColors.accentOf(context),
+                          foregroundColor: MobiusColors.onAccentOf(context),
                         ),
                       ),
                     ],
@@ -485,8 +468,8 @@ class _AlbumDetailPage extends StatelessWidget {
           Expanded(
             child: ListView.separated(
               itemCount: album.trackIds.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(height: 1, color: Color(0xFF2A2A2A)),
+              separatorBuilder: (context, __) =>
+                  Divider(height: 1, color: MobiusColors.borderOf(context)),
               itemBuilder: (context, index) {
                 final trackId = album.trackIds[index];
                 final metadata = _metadataForTrack(trackId);
@@ -514,8 +497,8 @@ class _AlbumDetailPage extends StatelessWidget {
                     child: Text(
                       '${index + 1}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xFF9A9A9A),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 13,
                         fontFamily: 'monospace',
                       ),
@@ -525,8 +508,8 @@ class _AlbumDetailPage extends StatelessWidget {
                     metadata.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFEDEDED),
+                    style: TextStyle(
+                      color: MobiusColors.textOf(context),
                       fontSize: 14,
                     ),
                   ),
@@ -534,8 +517,8 @@ class _AlbumDetailPage extends StatelessWidget {
                     metadata.artist,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF9A9A9A),
+                    style: TextStyle(
+                      color: MobiusColors.textDimOf(context),
                       fontSize: 12,
                     ),
                   ),
@@ -545,9 +528,9 @@ class _AlbumDetailPage extends StatelessWidget {
                       playerController.setQueue(album.trackIds);
                       playerController.selectAndPlay(index);
                     },
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.play_arrow_rounded,
-                      color: Color(0xFFC4A8F0),
+                      color: MobiusColors.accentLightOf(context),
                     ),
                   ),
                   ),

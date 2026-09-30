@@ -221,6 +221,16 @@ impl PlaybackController {
         self.output_mode
     }
 
+    /// The sample rate the current session actually negotiated with the output
+    /// device, or `None` when nothing is loaded. This is the ground truth for
+    /// whether playback is bit-perfect (equals the source rate) or resampled.
+    pub fn effective_output_rate(&self) -> Option<u32> {
+        self.session
+            .as_ref()
+            .map(|session| session.output_sample_rate)
+            .filter(|&rate| rate > 0)
+    }
+
     pub fn set_output_mode(&mut self, mode: PlaybackOutputMode) {
         self.output_mode = mode;
     }
@@ -358,7 +368,8 @@ impl PlaybackController {
         //
         Self::configure_output_rate(device_id, output_sample_rate)?;
 
-        let ring_config = PcmRingConfig::new(self.ring_capacity_samples);
+        let ring_config =
+            PcmRingConfig::new(self.ring_capacity_for(output_sample_rate, source_channels));
 
         let (mut producer, consumer) = pcm_ring_buffer(ring_config);
 
@@ -442,6 +453,16 @@ impl PlaybackController {
         self.state = PlaybackState::Playing;
 
         Ok(())
+    }
+
+    /// Ring size for one session: the configured capacity, grown so it always
+    /// holds at least `MIN_RING_SECONDS` of audio at the OUTPUT rate. A fixed
+    /// 262,144-sample ring is ~3 s at 44.1 kHz stereo but only ~0.34 s at
+    /// 384 kHz, which would leave little margin against decoder stalls.
+    fn ring_capacity_for(&self, output_sample_rate: u32, channels: impl Into<u64>) -> usize {
+        const MIN_RING_SECONDS: u64 = 2;
+        let needed = output_sample_rate as u64 * channels.into() * MIN_RING_SECONDS;
+        self.ring_capacity_samples.max(needed as usize)
     }
 
     fn configure_output_rate(device_id: u32, target_sample_rate: u32) -> Result<(), PlaybackError> {
@@ -545,7 +566,8 @@ impl PlaybackController {
         //
         Self::configure_output_rate(device_id, output_sample_rate)?;
 
-        let ring_config = PcmRingConfig::new(self.ring_capacity_samples);
+        let ring_config =
+            PcmRingConfig::new(self.ring_capacity_for(output_sample_rate, source_channels));
 
         let (mut producer, consumer) = pcm_ring_buffer(ring_config);
 
@@ -731,6 +753,16 @@ impl PlaybackController {
     pub fn state(&self) -> PlaybackState {
         self.state
     }
+
+    pub fn output_mode(&self) -> PlaybackOutputMode {
+        PlaybackOutputMode::Auto
+    }
+
+    pub fn effective_output_rate(&self) -> Option<u32> {
+        None
+    }
+
+    pub fn set_output_mode(&mut self, _mode: PlaybackOutputMode) {}
 
     pub fn volume(&self) -> f32 {
         self.volume

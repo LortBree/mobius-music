@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/theme/colors.dart';
 import '../data/ffi_library_repository.dart';
 import '../../../playback/player_controller.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../data/user_collections.dart';
+import 'group_artwork.dart';
 import 'track_context_menu.dart';
 
 class ArtistsPage extends StatefulWidget {
@@ -36,12 +38,11 @@ class _ArtistEntry {
   _ArtistEntry({
     required this.name,
     required this.trackIds,
-    required this.artwork,
-  });
+  }) : artwork = GroupArtworkSource(trackIds);
 
   final String name;
   final List<int> trackIds;
-  final TrackArtwork? artwork;
+  final GroupArtworkSource artwork;
 }
 
 class _ArtistBuilder {
@@ -49,7 +50,6 @@ class _ArtistBuilder {
 
   final String name;
   final List<int> trackIds = [];
-  TrackArtwork? artwork;
 }
 
 class _ArtistsPageState extends State<ArtistsPage> {
@@ -98,16 +98,6 @@ class _ArtistsPageState extends State<ArtistsPage> {
         final builder = groups.putIfAbsent(key, () => _ArtistBuilder(name));
 
         builder.trackIds.add(trackId);
-
-        if (builder.artwork == null) {
-          try {
-            final artwork = widget.repository.getTrackArtwork(trackId);
-
-            if (artwork != null && artwork.data.isNotEmpty) {
-              builder.artwork = artwork;
-            }
-          } catch (_) {}
-        }
       }
 
       final artists =
@@ -116,7 +106,6 @@ class _ArtistsPageState extends State<ArtistsPage> {
                 (builder) => _ArtistEntry(
                   name: builder.name,
                   trackIds: List.unmodifiable(builder.trackIds),
-                  artwork: builder.artwork,
                 ),
               )
               .toList()
@@ -203,19 +192,19 @@ class _ArtistsPageState extends State<ArtistsPage> {
     }
 
     if (_error != null) {
-      return const Center(
+      return Center(
         child: Text(
           'Unable to load artists.',
-          style: TextStyle(color: Color(0xFFEDEDED), fontSize: 15),
+          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 15),
         ),
       );
     }
 
     if (_artists.isEmpty) {
-      return const Center(
+      return Center(
         child: Text(
           'No artists found.',
-          style: TextStyle(color: Color(0xFF9A9A9A), fontSize: 15),
+          style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 15),
         ),
       );
     }
@@ -224,13 +213,13 @@ class _ArtistsPageState extends State<ArtistsPage> {
       padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
       child: CustomScrollView(
         slivers: [
-          const SliverToBoxAdapter(
+          SliverToBoxAdapter(
             child: Text(
               'Artists',
               style: TextStyle(
                 fontSize: 42,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFFEDEDED),
+                color: MobiusColors.textOf(context),
               ),
             ),
           ),
@@ -241,6 +230,7 @@ class _ArtistsPageState extends State<ArtistsPage> {
 
               return _ArtistCard(
                 artist: artist,
+                repository: widget.repository,
                 onTap: () => _openArtist(artist),
               );
             }, childCount: _artists.length),
@@ -258,15 +248,18 @@ class _ArtistsPageState extends State<ArtistsPage> {
 }
 
 class _ArtistCard extends StatelessWidget {
-  const _ArtistCard({required this.artist, required this.onTap});
+  const _ArtistCard({
+    required this.artist,
+    required this.repository,
+    required this.onTap,
+  });
 
   final _ArtistEntry artist;
+  final LibraryRepository repository;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final artwork = artist.artwork;
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -281,23 +274,17 @@ class _ArtistCard extends StatelessWidget {
                   aspectRatio: 1,
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1A1A1A),
+                      color: MobiusColors.panelOf(context),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     clipBehavior: Clip.antiAlias,
-                    child: artwork != null && artwork.data.isNotEmpty
-                        ? Image.memory(
-                            artwork.data,
-                            cacheWidth: 440,
-                            cacheHeight: 440,
-                            fit: BoxFit.cover,
-                            filterQuality: FilterQuality.medium,
-                            gaplessPlayback: true,
-                            errorBuilder: (_, __, ___) {
-                              return const _ArtistPlaceholder();
-                            },
-                        )
-                        : const _ArtistPlaceholder(),
+                    child: GroupArtwork(
+                      repository: repository,
+                      source: artist.artwork,
+                      decodeSize: 440,
+                      filterQuality: FilterQuality.medium,
+                      placeholder: const _ArtistPlaceholder(),
+                    ),
                   ),
               ),
               const SizedBox(height: 12),
@@ -305,8 +292,8 @@ class _ArtistCard extends StatelessWidget {
                 artist.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFFEDEDED),
+                style: TextStyle(
+                  color: MobiusColors.textOf(context),
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
@@ -314,7 +301,7 @@ class _ArtistCard extends StatelessWidget {
               const SizedBox(height: 5),
               Text(
                 '${artist.trackIds.length} tracks',
-                style: const TextStyle(color: Color(0xFF9A9A9A), fontSize: 13),
+                style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
               ),
             ],
           ),
@@ -329,11 +316,11 @@ class _ArtistPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
+    return Center(
       child: Icon(
         Icons.person_outline_rounded,
         size: 54,
-        color: Color(0xFF6A3FC0),
+        color: MobiusColors.accentOf(context),
       ),
     );
   }
@@ -371,8 +358,6 @@ class _ArtistDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final artwork = artist.artwork;
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 36, 24),
       child: Column(
@@ -386,10 +371,10 @@ class _ArtistDetailPage extends StatelessWidget {
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
               const SizedBox(width: 6),
-              const Text(
+              Text(
                 'ARTIST',
                 style: TextStyle(
-                  color: Color(0xFFC4A8F0),
+                  color: MobiusColors.accentLightOf(context),
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.4,
@@ -405,23 +390,18 @@ class _ArtistDetailPage extends StatelessWidget {
                 width: 220,
                 height: 220,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
+                  color: MobiusColors.panelOf(context),
                   borderRadius: BorderRadius.circular(110),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: artwork != null && artwork.data.isNotEmpty
-                    ? Image.memory(
-                        artwork.data,
-                        cacheWidth: 960,
-                        cacheHeight: 960,
-                        fit: BoxFit.cover,
-                        filterQuality: FilterQuality.high,
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) {
-                          return const _ArtistPlaceholder();
-                        },
-                      )
-                    : const _ArtistPlaceholder(),
+                // 220 logical px; 440 covers a 2x display.
+                child: GroupArtwork(
+                  repository: repository,
+                  source: artist.artwork,
+                  decodeSize: 440,
+                  filterQuality: FilterQuality.high,
+                  placeholder: const _ArtistPlaceholder(),
+                ),
               ),
               const SizedBox(width: 28),
               Expanded(
@@ -434,8 +414,8 @@ class _ArtistDetailPage extends StatelessWidget {
                         artist.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFEDEDED),
+                        style: TextStyle(
+                          color: MobiusColors.textOf(context),
                           fontSize: 34,
                           fontWeight: FontWeight.w600,
                         ),
@@ -443,8 +423,8 @@ class _ArtistDetailPage extends StatelessWidget {
                       const SizedBox(height: 12),
                       Text(
                         '${artist.trackIds.length} tracks',
-                        style: const TextStyle(
-                          color: Color(0xFF9A9A9A),
+                        style: TextStyle(
+                          color: MobiusColors.textDimOf(context),
                           fontSize: 13,
                         ),
                       ),
@@ -454,8 +434,8 @@ class _ArtistDetailPage extends StatelessWidget {
                         icon: const Icon(Icons.play_arrow_rounded, size: 20),
                         label: const Text('Play Artist'),
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF8A63D2),
-                          foregroundColor: const Color(0xFFFAFAFA),
+                          backgroundColor: MobiusColors.accentOf(context),
+                          foregroundColor: MobiusColors.onAccentOf(context),
                         ),
                       ),
                     ],
@@ -468,8 +448,8 @@ class _ArtistDetailPage extends StatelessWidget {
           Expanded(
             child: ListView.separated(
               itemCount: artist.trackIds.length,
-              separatorBuilder: (_, __) =>
-                  const Divider(height: 1, color: Color(0xFF2A2A2A)),
+              separatorBuilder: (context, __) =>
+                  Divider(height: 1, color: MobiusColors.borderOf(context)),
               itemBuilder: (context, index) {
                 final trackId = artist.trackIds[index];
                 final metadata = repository.getTrackMetadata(trackId);
@@ -497,8 +477,8 @@ class _ArtistDetailPage extends StatelessWidget {
                     child: Text(
                       '${index + 1}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xFF9A9A9A),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
                         fontSize: 13,
                         fontFamily: 'monospace',
                       ),
@@ -508,8 +488,8 @@ class _ArtistDetailPage extends StatelessWidget {
                     metadata.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFEDEDED),
+                    style: TextStyle(
+                      color: MobiusColors.textOf(context),
                       fontSize: 14,
                     ),
                   ),
@@ -517,8 +497,8 @@ class _ArtistDetailPage extends StatelessWidget {
                     metadata.album.isEmpty ? metadata.artist : metadata.album,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF9A9A9A),
+                    style: TextStyle(
+                      color: MobiusColors.textDimOf(context),
                       fontSize: 12,
                     ),
                   ),
@@ -528,9 +508,9 @@ class _ArtistDetailPage extends StatelessWidget {
                       playerController.setQueue(artist.trackIds);
                       playerController.selectAndPlay(index);
                     },
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.play_arrow_rounded,
-                      color: Color(0xFFC4A8F0),
+                      color: MobiusColors.accentLightOf(context),
                     ),
                   ),
                   ),

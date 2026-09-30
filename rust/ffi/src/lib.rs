@@ -1,5 +1,6 @@
 use std::{
     ffi::{c_char, CStr, CString},
+    panic::{self, AssertUnwindSafe},
     path::Path,
     ptr,
 };
@@ -306,35 +307,41 @@ pub extern "C" fn offline_player_version() -> *const c_char {
 }
 
 #[no_mangle]
+// Pre-existing safe signature kept for Rust callers; the pointer writes were
+// already here. Clippy only started flagging them once the body moved into
+// the ffi_guard closure.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn offline_player_create(
     db_path: *const c_char,
     out_handle: *mut *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    if out_handle.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
+    ffi_guard(|| {
+        if out_handle.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
 
-    unsafe {
-        *out_handle = ptr::null_mut();
-    }
+        unsafe {
+            *out_handle = ptr::null_mut();
+        }
 
-    let db_path = match read_utf8_string(db_path) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+        let db_path = match read_utf8_string(db_path) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    let player = match OfflinePlayer::new(Path::new(&db_path)) {
-        Ok(value) => value,
-        Err(error) => return OfflinePlayerResult::from_service_error(&error),
-    };
+        let player = match OfflinePlayer::new(Path::new(&db_path)) {
+            Ok(value) => value,
+            Err(error) => return OfflinePlayerResult::from_service_error(&error),
+        };
 
-    let handle = Box::new(OfflinePlayerHandle { inner: player });
+        let handle = Box::new(OfflinePlayerHandle { inner: player });
 
-    unsafe {
-        *out_handle = Box::into_raw(handle);
-    }
+        unsafe {
+            *out_handle = Box::into_raw(handle);
+        }
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -343,7 +350,19 @@ pub unsafe extern "C" fn offline_player_destroy(handle: *mut OfflinePlayerHandle
         return;
     }
 
-    drop(Box::from_raw(handle));
+    // Dropping the player stops audio and joins the decoder thread; a panic
+    // there must not unwind into the caller (Rust aborts the process when a
+    // panic crosses `extern "C"`).
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| drop(Box::from_raw(handle))));
+}
+
+/// Run an FFI export body, converting a Rust panic into `InternalError`.
+///
+/// Without this, a panic anywhere below the C ABI (an `expect`, an index
+/// out of bounds, an allocation failure) aborts the whole app instead of
+/// returning an error code the Dart side can handle.
+fn ffi_guard(body: impl FnOnce() -> OfflinePlayerResult) -> OfflinePlayerResult {
+    panic::catch_unwind(AssertUnwindSafe(body)).unwrap_or(OfflinePlayerResult::InternalError)
 }
 
 #[no_mangle]
@@ -355,88 +374,90 @@ pub unsafe extern "C" fn offline_player_scan_directory(
     out_scan_errors: *mut i64,
     out_persisted_assets: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_scanned_assets.is_null()
-        || out_ignored_files.is_null()
-        || out_scan_errors.is_null()
-        || out_persisted_assets.is_null()
-    {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    let root_path = match read_utf8_string(root_path) {
-        Ok(value) => value,
-        Err(code) => {
-            player.set_error("invalid root path");
-            return code;
+    ffi_guard(|| {
+        if out_scanned_assets.is_null()
+            || out_ignored_files.is_null()
+            || out_scan_errors.is_null()
+            || out_persisted_assets.is_null()
+        {
+            return OfflinePlayerResult::NullArgument;
         }
-    };
 
-    let report = match player.service.scan_directory(Path::new(&root_path)) {
-        Ok(value) => value,
-        Err(error) => {
-            let code = OfflinePlayerResult::from_service_error(&error);
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-            player.set_error(error.to_string());
+        let root_path = match read_utf8_string(root_path) {
+            Ok(value) => value,
+            Err(code) => {
+                player.set_error("invalid root path");
+                return code;
+            }
+        };
 
-            return code;
+        let report = match player.service.scan_directory(Path::new(&root_path)) {
+            Ok(value) => value,
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+
+                player.set_error(error.to_string());
+
+                return code;
+            }
+        };
+
+        let scanned_assets = match i64::try_from(report.scanned_assets()) {
+            Ok(value) => value,
+            Err(_) => {
+                return player.fail(
+                    OfflinePlayerResult::InternalError,
+                    "scanned asset count exceeds i64",
+                )
+            }
+        };
+
+        let ignored_files = match i64::try_from(report.ignored_files()) {
+            Ok(value) => value,
+            Err(_) => {
+                return player.fail(
+                    OfflinePlayerResult::InternalError,
+                    "ignored file count exceeds i64",
+                )
+            }
+        };
+
+        let scan_errors = match i64::try_from(report.scan_errors()) {
+            Ok(value) => value,
+            Err(_) => {
+                return player.fail(
+                    OfflinePlayerResult::InternalError,
+                    "scan error count exceeds i64",
+                )
+            }
+        };
+
+        let persisted_assets = match i64::try_from(report.persisted_assets()) {
+            Ok(value) => value,
+            Err(_) => {
+                return player.fail(
+                    OfflinePlayerResult::InternalError,
+                    "persisted asset count exceeds i64",
+                )
+            }
+        };
+
+        unsafe {
+            *out_scanned_assets = scanned_assets;
+            *out_ignored_files = ignored_files;
+            *out_scan_errors = scan_errors;
+            *out_persisted_assets = persisted_assets;
         }
-    };
 
-    let scanned_assets = match i64::try_from(report.scanned_assets()) {
-        Ok(value) => value,
-        Err(_) => {
-            return player.fail(
-                OfflinePlayerResult::InternalError,
-                "scanned asset count exceeds i64",
-            )
-        }
-    };
+        player.clear_error();
 
-    let ignored_files = match i64::try_from(report.ignored_files()) {
-        Ok(value) => value,
-        Err(_) => {
-            return player.fail(
-                OfflinePlayerResult::InternalError,
-                "ignored file count exceeds i64",
-            )
-        }
-    };
-
-    let scan_errors = match i64::try_from(report.scan_errors()) {
-        Ok(value) => value,
-        Err(_) => {
-            return player.fail(
-                OfflinePlayerResult::InternalError,
-                "scan error count exceeds i64",
-            )
-        }
-    };
-
-    let persisted_assets = match i64::try_from(report.persisted_assets()) {
-        Ok(value) => value,
-        Err(_) => {
-            return player.fail(
-                OfflinePlayerResult::InternalError,
-                "persisted asset count exceeds i64",
-            )
-        }
-    };
-
-    unsafe {
-        *out_scanned_assets = scanned_assets;
-        *out_ignored_files = ignored_files;
-        *out_scan_errors = scan_errors;
-        *out_persisted_assets = persisted_assets;
-    }
-
-    player.clear_error();
-
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -444,26 +465,28 @@ pub unsafe extern "C" fn offline_player_library_track_count(
     handle: *mut OfflinePlayerHandle,
     out_count: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_count.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.library().track_count() {
-        Ok(count) => {
-            *out_count = count;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_count.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        Err(error) => {
-            player.set_error(error.to_string());
-            OfflinePlayerResult::LibraryError
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.library().track_count() {
+            Ok(count) => {
+                *out_count = count;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                player.set_error(error.to_string());
+                OfflinePlayerResult::LibraryError
+            }
         }
-    }
+    })
 }
 
 #[no_mangle]
@@ -472,53 +495,109 @@ pub unsafe extern "C" fn offline_player_library_track_id_at(
     index: i64,
     out_track_id: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_track_id.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
+    ffi_guard(|| {
+        if out_track_id.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
 
-    if index < 0 {
+        if index < 0 {
+            let player = match handle_ref(handle) {
+                Ok(value) => value,
+                Err(code) => return code,
+            };
+
+            return player.fail(
+                OfflinePlayerResult::InvalidArgument,
+                "track index must not be negative",
+            );
+        }
+
         let player = match handle_ref(handle) {
             Ok(value) => value,
             Err(code) => return code,
         };
 
-        return player.fail(
-            OfflinePlayerResult::InvalidArgument,
-            "track index must not be negative",
-        );
-    }
+        let track_ids = match player.service.library().playback_track_ids() {
+            Ok(value) => value,
+            Err(error) => {
+                player.set_error(error.to_string());
+                return OfflinePlayerResult::LibraryError;
+            }
+        };
 
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+        let index = match usize::try_from(index) {
+            Ok(value) => value,
+            Err(_) => {
+                return player.fail(
+                    OfflinePlayerResult::InvalidArgument,
+                    "track index is out of range",
+                )
+            }
+        };
 
-    let tracks = match player.service.library().playback_tracks() {
-        Ok(value) => value,
-        Err(error) => {
-            player.set_error(error.to_string());
-            return OfflinePlayerResult::LibraryError;
+        match track_ids.get(index) {
+            Some(&track_id) => {
+                *out_track_id = track_id;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(OfflinePlayerResult::NotFound, "track index is out of range"),
         }
-    };
+    })
+}
 
-    let index = match usize::try_from(index) {
-        Ok(value) => value,
-        Err(_) => {
+/// Copy every library track id (same order as `library_track_id_at`) into
+/// `out_ids` in one call.
+///
+/// `*out_count` always receives the total number of ids. If `capacity` is
+/// smaller than that, nothing is copied and `BufferTooSmall` is returned so
+/// the caller can retry with a larger buffer. `out_ids` may be null only
+/// when `capacity` is 0.
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_library_track_ids(
+    handle: *mut OfflinePlayerHandle,
+    out_ids: *mut i64,
+    capacity: usize,
+    out_count: *mut usize,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out_count.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        let track_ids = match player.service.library().playback_track_ids() {
+            Ok(value) => value,
+            Err(error) => {
+                player.set_error(error.to_string());
+                return OfflinePlayerResult::LibraryError;
+            }
+        };
+
+        *out_count = track_ids.len();
+
+        if capacity < track_ids.len() {
             return player.fail(
-                OfflinePlayerResult::InvalidArgument,
-                "track index is out of range",
-            )
+                OfflinePlayerResult::BufferTooSmall,
+                format!("buffer too small; required {} ids", track_ids.len()),
+            );
         }
-    };
 
-    match tracks.get(index) {
-        Some(track) => {
-            *out_track_id = track.track_id;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        if !track_ids.is_empty() {
+            if out_ids.is_null() {
+                return player.fail(OfflinePlayerResult::NullArgument, "output buffer is null");
+            }
+
+            ptr::copy_nonoverlapping(track_ids.as_ptr(), out_ids, track_ids.len());
         }
-        None => player.fail(OfflinePlayerResult::NotFound, "track index is out of range"),
-    }
+
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -527,75 +606,79 @@ pub unsafe extern "C" fn offline_player_library_track_artwork(
     track_id: i64,
     out_artwork: *mut OfflinePlayerTrackArtwork,
 ) -> OfflinePlayerResult {
-    if out_artwork.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    let artwork = match player.service.library().track_artwork(track_id) {
-        Ok(Some(value)) => value,
-        Ok(None) => return player.fail(OfflinePlayerResult::NotFound, "track artwork not found"),
-        Err(error) => {
-            player.set_error(error.to_string());
-            return OfflinePlayerResult::LibraryError;
+    ffi_guard(|| {
+        if out_artwork.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-    };
 
-    let out = &mut *out_artwork;
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    let mime_type = artwork.mime_type.as_deref().unwrap_or("");
-    let mime_bytes = mime_type.as_bytes();
+        let artwork = match player.service.library().track_artwork(track_id) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                return player.fail(OfflinePlayerResult::NotFound, "track artwork not found")
+            }
+            Err(error) => {
+                player.set_error(error.to_string());
+                return OfflinePlayerResult::LibraryError;
+            }
+        };
 
-    let mime_required = match mime_bytes.len().checked_add(1) {
-        Some(value) => value,
-        None => {
+        let out = &mut *out_artwork;
+
+        let mime_type = artwork.mime_type.as_deref().unwrap_or("");
+        let mime_bytes = mime_type.as_bytes();
+
+        let mime_required = match mime_bytes.len().checked_add(1) {
+            Some(value) => value,
+            None => {
+                return player.fail(
+                    OfflinePlayerResult::InternalError,
+                    "MIME type length overflow",
+                )
+            }
+        };
+
+        out.track_id = track_id;
+        out.mime_type_size = mime_required;
+        out.data_size = artwork.data.len();
+
+        if out.mime_type_capacity < mime_required {
             return player.fail(
-                OfflinePlayerResult::InternalError,
-                "MIME type length overflow",
-            )
+                OfflinePlayerResult::BufferTooSmall,
+                format!("MIME type buffer too small; required {mime_required} bytes"),
+            );
         }
-    };
 
-    out.track_id = track_id;
-    out.mime_type_size = mime_required;
-    out.data_size = artwork.data.len();
+        if artwork.data.len() > out.data_capacity {
+            return player.fail(
+                OfflinePlayerResult::BufferTooSmall,
+                format!(
+                    "artwork buffer too small; required {} bytes",
+                    artwork.data.len()
+                ),
+            );
+        }
 
-    if out.mime_type_capacity < mime_required {
-        return player.fail(
-            OfflinePlayerResult::BufferTooSmall,
-            format!("MIME type buffer too small; required {mime_required} bytes"),
-        );
-    }
+        let result = player.write_string(mime_type, out.mime_type, out.mime_type_capacity);
 
-    if artwork.data.len() > out.data_capacity {
-        return player.fail(
-            OfflinePlayerResult::BufferTooSmall,
-            format!(
-                "artwork buffer too small; required {} bytes",
-                artwork.data.len()
-            ),
-        );
-    }
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
 
-    let result = player.write_string(mime_type, out.mime_type, out.mime_type_capacity);
+        let result = player.write_bytes(&artwork.data, out.data, out.data_capacity);
 
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
 
-    let result = player.write_bytes(&artwork.data, out.data, out.data_capacity);
+        player.clear_error();
 
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    player.clear_error();
-
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -603,96 +686,104 @@ pub unsafe extern "C" fn offline_player_load_track(
     handle: *mut OfflinePlayerHandle,
     track_id: i64,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.service.load_track(track_id) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.service.load_track(track_id) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+
+                player.set_error(error.to_string());
+
+                code
+            }
         }
-        Err(error) => {
-            let code = OfflinePlayerResult::from_service_error(&error);
-
-            player.set_error(error.to_string());
-
-            code
-        }
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_play(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.service.play() {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.service.play() {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+
+                player.set_error(error.to_string());
+
+                code
+            }
         }
-        Err(error) => {
-            let code = OfflinePlayerResult::from_service_error(&error);
-
-            player.set_error(error.to_string());
-
-            code
-        }
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_pause(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.service.pause() {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.service.pause() {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+
+                player.set_error(error.to_string());
+
+                code
+            }
         }
-        Err(error) => {
-            let code = OfflinePlayerResult::from_service_error(&error);
-
-            player.set_error(error.to_string());
-
-            code
-        }
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_stop(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.service.stop() {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.service.stop() {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+
+                player.set_error(error.to_string());
+
+                code
+            }
         }
-        Err(error) => {
-            let code = OfflinePlayerResult::from_service_error(&error);
-
-            player.set_error(error.to_string());
-
-            code
-        }
-    }
+    })
 }
 
 #[no_mangle]
@@ -700,24 +791,26 @@ pub unsafe extern "C" fn offline_player_seek_to_frame(
     handle: *mut OfflinePlayerHandle,
     frame: u64,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.service.seek_to_frame(frame) {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.service.seek_to_frame(frame) {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+
+                player.set_error(error.to_string());
+
+                code
+            }
         }
-        Err(error) => {
-            let code = OfflinePlayerResult::from_service_error(&error);
-
-            player.set_error(error.to_string());
-
-            code
-        }
-    }
+    })
 }
 
 #[no_mangle]
@@ -725,21 +818,23 @@ pub unsafe extern "C" fn offline_player_set_output_mode(
     handle: *mut OfflinePlayerHandle,
     mode: i32,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    let mode = match output_mode_from_raw(mode) {
-        Ok(value) => value,
-        Err(code) => return player.fail(code, "invalid output mode"),
-    };
+        let mode = match output_mode_from_raw(mode) {
+            Ok(value) => value,
+            Err(code) => return player.fail(code, "invalid output mode"),
+        };
 
-    player.service.set_output_mode(mode);
+        player.service.set_output_mode(mode);
 
-    player.clear_error();
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -747,20 +842,49 @@ pub unsafe extern "C" fn offline_player_output_mode(
     handle: *mut OfflinePlayerHandle,
     out_mode: *mut OfflinePlayerOutputMode,
 ) -> OfflinePlayerResult {
-    if out_mode.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
+    ffi_guard(|| {
+        if out_mode.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
 
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    *out_mode = player.service.output_mode().into();
+        *out_mode = player.service.output_mode().into();
 
-    player.clear_error();
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
+}
+
+/// Write the sample rate (Hz) the current session negotiated with the output
+/// device into `*out_rate`, or `0` when no track is loaded. This is the actual
+/// rate playback is running at -- compare it to the track's source sample rate
+/// to know whether playback is bit-perfect (equal) or resampled (different).
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_effective_output_rate(
+    handle: *mut OfflinePlayerHandle,
+    out_rate: *mut u32,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out_rate.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        *out_rate = player.service.effective_output_rate().unwrap_or(0);
+
+        player.clear_error();
+
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -768,21 +892,23 @@ pub unsafe extern "C" fn offline_player_set_volume(
     handle: *mut OfflinePlayerHandle,
     volume: f32,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    if !volume.is_finite() {
-        return player.fail(
-            OfflinePlayerResult::InvalidArgument,
-            "volume must be finite",
-        );
-    }
+        if !volume.is_finite() {
+            return player.fail(
+                OfflinePlayerResult::InvalidArgument,
+                "volume must be finite",
+            );
+        }
 
-    player.service.set_volume(volume.clamp(0.0, 1.0));
-    player.clear_error();
-    OfflinePlayerResult::Ok
+        player.service.set_volume(volume.clamp(0.0, 1.0));
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -791,31 +917,33 @@ pub unsafe extern "C" fn offline_player_set_equalizer_gains(
     gains_db: *const f32,
     band_count: usize,
 ) -> OfflinePlayerResult {
-    if gains_db.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-    if band_count != 10 {
-        return player.fail(
-            OfflinePlayerResult::InvalidArgument,
-            "equalizer expects exactly ten bands",
-        );
-    }
-    let values = std::slice::from_raw_parts(gains_db, band_count);
-    let mut gains = [0.0_f32; 10];
-    gains.copy_from_slice(values);
-    if gains.iter().any(|gain| !gain.is_finite()) {
-        return player.fail(
-            OfflinePlayerResult::InvalidArgument,
-            "equalizer gains must be finite",
-        );
-    }
-    player.service.set_equalizer_gains(gains);
-    player.clear_error();
-    OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if gains_db.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+        if band_count != 10 {
+            return player.fail(
+                OfflinePlayerResult::InvalidArgument,
+                "equalizer expects exactly ten bands",
+            );
+        }
+        let values = std::slice::from_raw_parts(gains_db, band_count);
+        let mut gains = [0.0_f32; 10];
+        gains.copy_from_slice(values);
+        if gains.iter().any(|gain| !gain.is_finite()) {
+            return player.fail(
+                OfflinePlayerResult::InvalidArgument,
+                "equalizer gains must be finite",
+            );
+        }
+        player.service.set_equalizer_gains(gains);
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -823,20 +951,22 @@ pub unsafe extern "C" fn offline_player_state(
     handle: *mut OfflinePlayerHandle,
     out_state: *mut OfflinePlayerState,
 ) -> OfflinePlayerResult {
-    if out_state.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
+    ffi_guard(|| {
+        if out_state.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
 
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    *out_state = player.service.state().into();
+        *out_state = player.service.state().into();
 
-    player.clear_error();
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -844,26 +974,28 @@ pub unsafe extern "C" fn offline_player_current_frame(
     handle: *mut OfflinePlayerHandle,
     out_frame: *mut u64,
 ) -> OfflinePlayerResult {
-    if out_frame.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_frame() {
-        Some(frame) => {
-            *out_frame = frame;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_frame.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::PlaybackError,
-            "current playback frame is unavailable",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_frame() {
+            Some(frame) => {
+                *out_frame = frame;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::PlaybackError,
+                "current playback frame is unavailable",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -871,26 +1003,28 @@ pub unsafe extern "C" fn offline_player_current_source_frame(
     handle: *mut OfflinePlayerHandle,
     out_frame: *mut u64,
 ) -> OfflinePlayerResult {
-    if out_frame.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_source_frame() {
-        Some(frame) => {
-            *out_frame = frame;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_frame.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::PlaybackError,
-            "current source frame is unavailable",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_source_frame() {
+            Some(frame) => {
+                *out_frame = frame;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::PlaybackError,
+                "current source frame is unavailable",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -898,26 +1032,28 @@ pub unsafe extern "C" fn offline_player_current_seconds(
     handle: *mut OfflinePlayerHandle,
     out_seconds: *mut f64,
 ) -> OfflinePlayerResult {
-    if out_seconds.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_seconds() {
-        Some(seconds) => {
-            *out_seconds = seconds;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_seconds.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::PlaybackError,
-            "current playback position is unavailable",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_seconds() {
+            Some(seconds) => {
+                *out_seconds = seconds;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::PlaybackError,
+                "current playback position is unavailable",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -925,26 +1061,28 @@ pub unsafe extern "C" fn offline_player_duration_seconds(
     handle: *mut OfflinePlayerHandle,
     out_seconds: *mut f64,
 ) -> OfflinePlayerResult {
-    if out_seconds.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.duration_seconds() {
-        Some(seconds) => {
-            *out_seconds = seconds;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_seconds.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::PlaybackError,
-            "track duration is unavailable",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.duration_seconds() {
+            Some(seconds) => {
+                *out_seconds = seconds;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::PlaybackError,
+                "track duration is unavailable",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -952,26 +1090,28 @@ pub unsafe extern "C" fn offline_player_total_frames(
     handle: *mut OfflinePlayerHandle,
     out_frames: *mut u64,
 ) -> OfflinePlayerResult {
-    if out_frames.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.total_frames() {
-        Some(frames) => {
-            *out_frames = frames;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_frames.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::PlaybackError,
-            "track frame count is unavailable",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.total_frames() {
+            Some(frames) => {
+                *out_frames = frames;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::PlaybackError,
+                "track frame count is unavailable",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -979,26 +1119,28 @@ pub unsafe extern "C" fn offline_player_track_id(
     handle: *mut OfflinePlayerHandle,
     out_track_id: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_track_id.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_track() {
-        Some(track) => {
-            *out_track_id = track.track_id;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_track_id.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::NotFound,
-            "no track is currently loaded",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_track() {
+            Some(track) => {
+                *out_track_id = track.track_id;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::NotFound,
+                "no track is currently loaded",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1006,26 +1148,28 @@ pub unsafe extern "C" fn offline_player_track_asset_id(
     handle: *mut OfflinePlayerHandle,
     out_asset_id: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_asset_id.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_track() {
-        Some(track) => {
-            *out_asset_id = track.asset_id;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_asset_id.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::NotFound,
-            "no track is currently loaded",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_track() {
+            Some(track) => {
+                *out_asset_id = track.asset_id;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::NotFound,
+                "no track is currently loaded",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1033,26 +1177,28 @@ pub unsafe extern "C" fn offline_player_track_sample_rate(
     handle: *mut OfflinePlayerHandle,
     out_sample_rate: *mut u32,
 ) -> OfflinePlayerResult {
-    if out_sample_rate.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_track() {
-        Some(track) => {
-            *out_sample_rate = track.sample_rate;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_sample_rate.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::NotFound,
-            "no track is currently loaded",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_track() {
+            Some(track) => {
+                *out_sample_rate = track.sample_rate;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::NotFound,
+                "no track is currently loaded",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1060,26 +1206,28 @@ pub unsafe extern "C" fn offline_player_track_channels(
     handle: *mut OfflinePlayerHandle,
     out_channels: *mut u16,
 ) -> OfflinePlayerResult {
-    if out_channels.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_track() {
-        Some(track) => {
-            *out_channels = track.channels;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_channels.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::NotFound,
-            "no track is currently loaded",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_track() {
+            Some(track) => {
+                *out_channels = track.channels;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::NotFound,
+                "no track is currently loaded",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1087,26 +1235,28 @@ pub unsafe extern "C" fn offline_player_track_bits_per_sample(
     handle: *mut OfflinePlayerHandle,
     out_bits: *mut u16,
 ) -> OfflinePlayerResult {
-    if out_bits.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.service.current_track() {
-        Some(track) => {
-            *out_bits = track.bits_per_sample;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_bits.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::NotFound,
-            "no track is currently loaded",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.current_track() {
+            Some(track) => {
+                *out_bits = track.bits_per_sample;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::NotFound,
+                "no track is currently loaded",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1115,22 +1265,24 @@ pub unsafe extern "C" fn offline_player_track_path(
     buffer: *mut c_char,
     capacity: usize,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    let path = match player.service.current_track() {
-        Some(track) => track.path.to_string_lossy().into_owned(),
-        None => {
-            return player.fail(
-                OfflinePlayerResult::NotFound,
-                "no track is currently loaded",
-            )
-        }
-    };
+        let path = match player.service.current_track() {
+            Some(track) => track.path.to_string_lossy().into_owned(),
+            None => {
+                return player.fail(
+                    OfflinePlayerResult::NotFound,
+                    "no track is currently loaded",
+                )
+            }
+        };
 
-    player.write_string(&path, buffer, capacity)
+        player.write_string(&path, buffer, capacity)
+    })
 }
 
 macro_rules! define_string_metadata_fn {
@@ -1141,25 +1293,27 @@ macro_rules! define_string_metadata_fn {
             buffer: *mut c_char,
             capacity: usize,
         ) -> OfflinePlayerResult {
-            let player = match handle_ref(handle) {
-                Ok(value) => value,
-                Err(code) => return code,
-            };
+            ffi_guard(|| {
+                let player = match handle_ref(handle) {
+                    Ok(value) => value,
+                    Err(code) => return code,
+                };
 
-            let value = match load_current_track_metadata_value(player, |metadata| {
-                metadata.$field.as_deref()
-            }) {
-                Ok(value) => value,
-                Err(code) => {
-                    if player.last_error.is_none() {
-                        player.set_error("track metadata is unavailable");
+                let value = match load_current_track_metadata_value(player, |metadata| {
+                    metadata.$field.as_deref()
+                }) {
+                    Ok(value) => value,
+                    Err(code) => {
+                        if player.last_error.is_none() {
+                            player.set_error("track metadata is unavailable");
+                        }
+
+                        return code;
                     }
+                };
 
-                    return code;
-                }
-            };
-
-            player.write_string(&value, buffer, capacity)
+                player.write_string(&value, buffer, capacity)
+            })
         }
     };
 }
@@ -1178,114 +1332,118 @@ pub unsafe extern "C" fn offline_player_library_track_metadata(
     track_id: i64,
     out_metadata: *mut OfflinePlayerTrackMetadata,
 ) -> OfflinePlayerResult {
-    if out_metadata.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    let metadata = match player.service.library().track_metadata(track_id) {
-        Ok(Some(value)) => value,
-        Ok(None) => return player.fail(OfflinePlayerResult::NotFound, "track metadata not found"),
-        Err(error) => {
-            player.set_error(error.to_string());
-            return OfflinePlayerResult::LibraryError;
+    ffi_guard(|| {
+        if out_metadata.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-    };
 
-    let out = &mut *out_metadata;
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    out.track_id = track_id;
+        let metadata = match player.service.library().track_metadata(track_id) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                return player.fail(OfflinePlayerResult::NotFound, "track metadata not found")
+            }
+            Err(error) => {
+                player.set_error(error.to_string());
+                return OfflinePlayerResult::LibraryError;
+            }
+        };
 
-    let result = player.write_string(
-        metadata.title.as_deref().unwrap_or(""),
-        out.title,
-        out.title_capacity,
-    );
+        let out = &mut *out_metadata;
 
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
+        out.track_id = track_id;
 
-    let result = player.write_string(
-        metadata.artist.as_deref().unwrap_or(""),
-        out.artist,
-        out.artist_capacity,
-    );
+        let result = player.write_string(
+            metadata.title.as_deref().unwrap_or(""),
+            out.title,
+            out.title_capacity,
+        );
 
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    let result = player.write_string(
-        metadata.album.as_deref().unwrap_or(""),
-        out.album,
-        out.album_capacity,
-    );
-
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    let result = player.write_string(
-        metadata.album_artist.as_deref().unwrap_or(""),
-        out.album_artist,
-        out.album_artist_capacity,
-    );
-
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    let result = player.write_string(
-        metadata.composer.as_deref().unwrap_or(""),
-        out.composer,
-        out.composer_capacity,
-    );
-
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    let result = player.write_string(
-        metadata.date.as_deref().unwrap_or(""),
-        out.date,
-        out.date_capacity,
-    );
-
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    let result = player.write_string(
-        metadata.genre.as_deref().unwrap_or(""),
-        out.genre,
-        out.genre_capacity,
-    );
-
-    if result != OfflinePlayerResult::Ok {
-        return result;
-    }
-
-    out.track_number = metadata.track_number;
-
-    match metadata.disc_number {
-        Some(value) => {
-            out.disc_number = value;
-            out.has_disc_number = 1;
+        if result != OfflinePlayerResult::Ok {
+            return result;
         }
-        None => {
-            out.disc_number = 0;
-            out.has_disc_number = 0;
+
+        let result = player.write_string(
+            metadata.artist.as_deref().unwrap_or(""),
+            out.artist,
+            out.artist_capacity,
+        );
+
+        if result != OfflinePlayerResult::Ok {
+            return result;
         }
-    }
 
-    player.clear_error();
+        let result = player.write_string(
+            metadata.album.as_deref().unwrap_or(""),
+            out.album,
+            out.album_capacity,
+        );
 
-    OfflinePlayerResult::Ok
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
+
+        let result = player.write_string(
+            metadata.album_artist.as_deref().unwrap_or(""),
+            out.album_artist,
+            out.album_artist_capacity,
+        );
+
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
+
+        let result = player.write_string(
+            metadata.composer.as_deref().unwrap_or(""),
+            out.composer,
+            out.composer_capacity,
+        );
+
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
+
+        let result = player.write_string(
+            metadata.date.as_deref().unwrap_or(""),
+            out.date,
+            out.date_capacity,
+        );
+
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
+
+        let result = player.write_string(
+            metadata.genre.as_deref().unwrap_or(""),
+            out.genre,
+            out.genre_capacity,
+        );
+
+        if result != OfflinePlayerResult::Ok {
+            return result;
+        }
+
+        out.track_number = metadata.track_number;
+
+        match metadata.disc_number {
+            Some(value) => {
+                out.disc_number = value;
+                out.has_disc_number = 1;
+            }
+            None => {
+                out.disc_number = 0;
+                out.has_disc_number = 0;
+            }
+        }
+
+        player.clear_error();
+
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -1293,40 +1451,44 @@ pub unsafe extern "C" fn offline_player_track_number(
     handle: *mut OfflinePlayerHandle,
     out_track_number: *mut u32,
 ) -> OfflinePlayerResult {
-    if out_track_number.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    let track_id = match player.service.current_track() {
-        Some(track) => track.track_id,
-        None => {
-            return player.fail(
-                OfflinePlayerResult::NotFound,
-                "no track is currently loaded",
-            )
+    ffi_guard(|| {
+        if out_track_number.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-    };
 
-    let metadata = match player.service.library().track_metadata(track_id) {
-        Ok(Some(value)) => value,
-        Ok(None) => return player.fail(OfflinePlayerResult::NotFound, "track metadata not found"),
-        Err(error) => {
-            player.set_error(error.to_string());
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-            return OfflinePlayerResult::LibraryError;
-        }
-    };
+        let track_id = match player.service.current_track() {
+            Some(track) => track.track_id,
+            None => {
+                return player.fail(
+                    OfflinePlayerResult::NotFound,
+                    "no track is currently loaded",
+                )
+            }
+        };
 
-    *out_track_number = metadata.track_number;
+        let metadata = match player.service.library().track_metadata(track_id) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                return player.fail(OfflinePlayerResult::NotFound, "track metadata not found")
+            }
+            Err(error) => {
+                player.set_error(error.to_string());
 
-    player.clear_error();
+                return OfflinePlayerResult::LibraryError;
+            }
+        };
 
-    OfflinePlayerResult::Ok
+        *out_track_number = metadata.track_number;
+
+        player.clear_error();
+
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -1334,43 +1496,47 @@ pub unsafe extern "C" fn offline_player_track_disc_number(
     handle: *mut OfflinePlayerHandle,
     out_disc_number: *mut u32,
 ) -> OfflinePlayerResult {
-    if out_disc_number.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    let track_id = match player.service.current_track() {
-        Some(track) => track.track_id,
-        None => {
-            return player.fail(
-                OfflinePlayerResult::NotFound,
-                "no track is currently loaded",
-            )
+    ffi_guard(|| {
+        if out_disc_number.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-    };
 
-    let metadata = match player.service.library().track_metadata(track_id) {
-        Ok(Some(value)) => value,
-        Ok(None) => return player.fail(OfflinePlayerResult::NotFound, "track metadata not found"),
-        Err(error) => {
-            player.set_error(error.to_string());
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-            return OfflinePlayerResult::LibraryError;
+        let track_id = match player.service.current_track() {
+            Some(track) => track.track_id,
+            None => {
+                return player.fail(
+                    OfflinePlayerResult::NotFound,
+                    "no track is currently loaded",
+                )
+            }
+        };
+
+        let metadata = match player.service.library().track_metadata(track_id) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                return player.fail(OfflinePlayerResult::NotFound, "track metadata not found")
+            }
+            Err(error) => {
+                player.set_error(error.to_string());
+
+                return OfflinePlayerResult::LibraryError;
+            }
+        };
+
+        match metadata.disc_number {
+            Some(number) => {
+                *out_disc_number = number;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(OfflinePlayerResult::NotFound, "disc number is unavailable"),
         }
-    };
-
-    match metadata.disc_number {
-        Some(number) => {
-            *out_disc_number = number;
-            player.clear_error();
-            OfflinePlayerResult::Ok
-        }
-        None => player.fail(OfflinePlayerResult::NotFound, "disc number is unavailable"),
-    }
+    })
 }
 
 #[no_mangle]
@@ -1379,31 +1545,33 @@ pub unsafe extern "C" fn offline_player_queue_set(
     track_ids: *const i64,
     track_count: usize,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    if track_count > 0 && track_ids.is_null() {
-        return player.fail(
-            OfflinePlayerResult::NullArgument,
-            "track_ids is null while track_count is non-zero",
-        );
-    }
-
-    let ids = if track_count == 0 {
-        Vec::new()
-    } else {
-        unsafe { std::slice::from_raw_parts(track_ids, track_count).to_vec() }
-    };
-
-    match player.queue.set_queue(&player.service, ids) {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        if track_count > 0 && track_ids.is_null() {
+            return player.fail(
+                OfflinePlayerResult::NullArgument,
+                "track_ids is null while track_count is non-zero",
+            );
         }
-        Err(error) => map_queue_error(player, error),
-    }
+
+        let ids = if track_count == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(track_ids, track_count).to_vec() }
+        };
+
+        match player.queue.set_queue(&player.service, ids) {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1411,33 +1579,37 @@ pub unsafe extern "C" fn offline_player_queue_add(
     handle: *mut OfflinePlayerHandle,
     track_id: i64,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.add_to_queue(&player.service, track_id) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.add_to_queue(&player.service, track_id) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_clear(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    player.queue.clear();
-    player.clear_error();
+        player.queue.clear();
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -1445,20 +1617,22 @@ pub unsafe extern "C" fn offline_player_queue_length(
     handle: *mut OfflinePlayerHandle,
     out_length: *mut usize,
 ) -> OfflinePlayerResult {
-    if out_length.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
+    ffi_guard(|| {
+        if out_length.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
 
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    *out_length = player.queue.len();
+        *out_length = player.queue.len();
 
-    player.clear_error();
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -1467,23 +1641,25 @@ pub unsafe extern "C" fn offline_player_queue_track_id_at(
     index: usize,
     out_track_id: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_track_id.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.queue.track_id_at(index) {
-        Some(track_id) => {
-            *out_track_id = track_id;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_track_id.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(OfflinePlayerResult::NotFound, "queue index is out of range"),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.queue.track_id_at(index) {
+            Some(track_id) => {
+                *out_track_id = track_id;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(OfflinePlayerResult::NotFound, "queue index is out of range"),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1491,16 +1667,18 @@ pub unsafe extern "C" fn offline_player_queue_up_next_count(
     handle: *mut OfflinePlayerHandle,
     out_count: *mut usize,
 ) -> OfflinePlayerResult {
-    if out_count.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-    *out_count = player.queue.queued_count();
-    player.clear_error();
-    OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_count.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+        *out_count = player.queue.queued_count();
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -1510,25 +1688,27 @@ pub unsafe extern "C" fn offline_player_queue_reorder_segment(
     track_ids: *const i64,
     track_count: usize,
 ) -> OfflinePlayerResult {
-    if track_count > 0 && track_ids.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-    let ids = if track_count == 0 {
-        Vec::new()
-    } else {
-        unsafe { std::slice::from_raw_parts(track_ids, track_count).to_vec() }
-    };
-    match player.queue.reorder_segment(start, ids) {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if track_count > 0 && track_ids.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        Err(error) => map_queue_error(player, error),
-    }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+        let ids = if track_count == 0 {
+            Vec::new()
+        } else {
+            unsafe { std::slice::from_raw_parts(track_ids, track_count).to_vec() }
+        };
+        match player.queue.reorder_segment(start, ids) {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1536,26 +1716,28 @@ pub unsafe extern "C" fn offline_player_queue_current_index(
     handle: *mut OfflinePlayerHandle,
     out_index: *mut usize,
 ) -> OfflinePlayerResult {
-    if out_index.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.queue.current_index() {
-        Some(index) => {
-            *out_index = index;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_index.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(
-            OfflinePlayerResult::NotFound,
-            "queue has no current position",
-        ),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.queue.current_index() {
+            Some(index) => {
+                *out_index = index;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(
+                OfflinePlayerResult::NotFound,
+                "queue has no current position",
+            ),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1563,23 +1745,25 @@ pub unsafe extern "C" fn offline_player_queue_current_track_id(
     handle: *mut OfflinePlayerHandle,
     out_track_id: *mut i64,
 ) -> OfflinePlayerResult {
-    if out_track_id.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
-
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    match player.queue.current_position() {
-        Some(position) => {
-            *out_track_id = position.track_id;
-            player.clear_error();
-            OfflinePlayerResult::Ok
+    ffi_guard(|| {
+        if out_track_id.is_null() {
+            return OfflinePlayerResult::NullArgument;
         }
-        None => player.fail(OfflinePlayerResult::NotFound, "queue has no current track"),
-    }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.queue.current_position() {
+            Some(position) => {
+                *out_track_id = position.track_id;
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            None => player.fail(OfflinePlayerResult::NotFound, "queue has no current track"),
+        }
+    })
 }
 
 #[no_mangle]
@@ -1587,20 +1771,22 @@ pub unsafe extern "C" fn offline_player_queue_set_repeat_mode(
     handle: *mut OfflinePlayerHandle,
     mode: i32,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    let mode = match repeat_mode_from_raw(mode) {
-        Ok(value) => value,
-        Err(code) => return player.fail(code, "invalid repeat mode"),
-    };
+        let mode = match repeat_mode_from_raw(mode) {
+            Ok(value) => value,
+            Err(code) => return player.fail(code, "invalid repeat mode"),
+        };
 
-    player.queue.set_repeat_mode(mode);
-    player.clear_error();
+        player.queue.set_repeat_mode(mode);
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 #[no_mangle]
@@ -1608,20 +1794,22 @@ pub unsafe extern "C" fn offline_player_queue_repeat_mode(
     handle: *mut OfflinePlayerHandle,
     out_mode: *mut OfflinePlayerRepeatMode,
 ) -> OfflinePlayerResult {
-    if out_mode.is_null() {
-        return OfflinePlayerResult::NullArgument;
-    }
+    ffi_guard(|| {
+        if out_mode.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
 
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    *out_mode = player.queue.repeat_mode().into();
+        *out_mode = player.queue.repeat_mode().into();
 
-    player.clear_error();
+        player.clear_error();
 
-    OfflinePlayerResult::Ok
+        OfflinePlayerResult::Ok
+    })
 }
 
 fn map_queue_error(
@@ -1658,18 +1846,20 @@ pub unsafe extern "C" fn offline_player_queue_select(
     handle: *mut OfflinePlayerHandle,
     index: usize,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.select(&player.service, index) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.select(&player.service, index) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
@@ -1677,36 +1867,40 @@ pub unsafe extern "C" fn offline_player_queue_select_and_load(
     handle: *mut OfflinePlayerHandle,
     index: usize,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.select_and_load(&mut player.service, index) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.select_and_load(&mut player.service, index) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_play_current(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.play_current(&mut player.service) {
-        Ok(()) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.play_current(&mut player.service) {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
@@ -1714,144 +1908,160 @@ pub unsafe extern "C" fn offline_player_queue_select_and_play(
     handle: *mut OfflinePlayerHandle,
     index: usize,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.select_and_play(&mut player.service, index) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.select_and_play(&mut player.service, index) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_next(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.next(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.next(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_next_and_play(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.next_and_play(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.next_and_play(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_previous(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.previous(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.previous(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_previous_and_play(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.previous_and_play(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.previous_and_play(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_repeat_current_and_play(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.repeat_current_and_play(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.repeat_current_and_play(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_advance_and_play(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.advance_and_play(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.advance_and_play(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_queue_advance_if_at_end(
     handle: *mut OfflinePlayerHandle,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    match player.queue.advance_if_at_end(&mut player.service) {
-        Ok(_) => {
-            player.clear_error();
-            OfflinePlayerResult::Ok
+        match player.queue.advance_if_at_end(&mut player.service) {
+            Ok(_) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => map_queue_error(player, error),
         }
-        Err(error) => map_queue_error(player, error),
-    }
+    })
 }
 
 #[no_mangle]
@@ -1860,17 +2070,19 @@ pub unsafe extern "C" fn offline_player_last_error(
     buffer: *mut c_char,
     capacity: usize,
 ) -> OfflinePlayerResult {
-    let player = match handle_ref(handle) {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
 
-    let message = match &player.last_error {
-        Some(message) => message.to_string_lossy().into_owned(),
-        None => String::new(),
-    };
+        let message = match &player.last_error {
+            Some(message) => message.to_string_lossy().into_owned(),
+            None => String::new(),
+        };
 
-    player.write_string(&message, buffer, capacity)
+        player.write_string(&message, buffer, capacity)
+    })
 }
 
 #[cfg(test)]
@@ -2036,5 +2248,33 @@ mod tests {
         unsafe {
             offline_player_destroy(ptr::null_mut());
         }
+    }
+
+    #[test]
+    fn ffi_guard_passes_through_results() {
+        assert_eq!(
+            ffi_guard(|| OfflinePlayerResult::Ok),
+            OfflinePlayerResult::Ok
+        );
+        assert_eq!(
+            ffi_guard(|| OfflinePlayerResult::NotFound),
+            OfflinePlayerResult::NotFound
+        );
+    }
+
+    #[test]
+    fn ffi_guard_converts_panic_to_internal_error() {
+        let result = ffi_guard(|| panic!("simulated failure below the C ABI"));
+
+        assert_eq!(result, OfflinePlayerResult::InternalError);
+    }
+
+    #[test]
+    fn library_track_ids_rejects_null_count() {
+        let result = unsafe {
+            offline_player_library_track_ids(ptr::null_mut(), ptr::null_mut(), 0, ptr::null_mut())
+        };
+
+        assert_eq!(result, OfflinePlayerResult::NullArgument);
     }
 }

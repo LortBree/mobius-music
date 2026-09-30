@@ -5,10 +5,11 @@ use std::{
         Arc, RwLock,
     },
     thread,
+    time::Duration,
 };
 
 use offline_player_audio_core::{
-    EqualizerSettings, GraphicEqualizer, LinearResampler, PcmProducer, PcmRingError, ResamplerError,
+    EqualizerSettings, GraphicEqualizer, LinearResampler, PcmProducer, ResamplerError,
 };
 
 use symphonia::core::{
@@ -520,7 +521,6 @@ fn stream_internal(
             }
 
             Err(err) => {
-                eprintln!("DECODER decode() error variant: {:?}", err);
                 return Err(StreamError::Symphonia(err));
             }
         };
@@ -621,13 +621,23 @@ fn stream_internal(
     ))
 }
 
+/// How long the decoder thread sleeps when it cannot make progress (ring
+/// full, or playback paused) before checking again.
+///
+/// The decoder runs far faster than realtime, so the ring is full for almost
+/// the whole track. Spinning on `yield_now` there kept one core at ~100% for
+/// the entire playback. 5 ms is ~441 stereo samples at 44.1 kHz -- a rounding
+/// error against the 262,144-sample ring -- so sleeping cannot starve the
+/// realtime consumer, and it bounds cancel/seek latency to one interval.
+const BACKOFF: Duration = Duration::from_millis(5);
+
 fn wait_while_paused(cancel: &AtomicBool, paused: &AtomicBool) -> Result<(), StreamError> {
     while paused.load(Ordering::Acquire) {
         if cancel.load(Ordering::Acquire) {
             return Err(StreamError::Cancelled);
         }
 
-        thread::yield_now();
+        thread::sleep(BACKOFF);
     }
 
     if cancel.load(Ordering::Acquire) {
@@ -708,48 +718,22 @@ fn push_samples_controlled(
     paused: &AtomicBool,
 ) -> Result<u64, StreamError> {
     let mut pushed = 0u64;
+    let mut rest = samples;
 
-    for &sample in samples {
+    // Push in slices: as much as the ring has room for, then back off. The
+    // realtime consumer never blocks on this side.
+    while !rest.is_empty() {
         wait_while_paused(cancel, paused)?;
-        push_sample(producer, sample, cancel)?;
-        pushed += 1;
+
+        let n = producer.push_slice(rest);
+        if n == 0 {
+            thread::sleep(BACKOFF);
+            continue;
+        }
+
+        pushed += n as u64;
+        rest = &rest[n..];
     }
 
     Ok(pushed)
-}
-
-/// Push one integer PCM sample.
-///
-/// The producer side may yield while the SPSC ring is full.
-/// The realtime consumer never blocks here.
-#[inline]
-fn push_sample(
-    producer: &mut PcmProducer,
-    sample: i32,
-    cancel: &AtomicBool,
-) -> Result<(), StreamError> {
-    loop {
-        if cancel.load(Ordering::Acquire) {
-            return Err(StreamError::Cancelled);
-        }
-
-        match producer.try_push(sample) {
-            Ok(()) => return Ok(()),
-
-            Err(PcmRingError::Full) => {
-                thread::yield_now();
-            }
-
-            Err(PcmRingError::Empty) => {
-                unreachable!("producer cannot report Empty");
-            }
-
-            Err(PcmRingError::InvalidLength) => {
-                unreachable!(
-                    "single-sample push cannot \
-                     have invalid length"
-                );
-            }
-        }
-    }
 }

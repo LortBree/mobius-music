@@ -62,10 +62,7 @@ class TrackArtwork {
 }
 
 class OfflinePlayerException implements Exception {
-  const OfflinePlayerException(
-    this.code,
-    this.message,
-  );
+  const OfflinePlayerException(this.code, this.message);
 
   final int code;
   final String message;
@@ -76,26 +73,11 @@ class OfflinePlayerException implements Exception {
   }
 }
 
-enum OfflinePlayerState {
-  idle,
-  loaded,
-  playing,
-  paused,
-  stopped,
-}
+enum OfflinePlayerState { idle, loaded, playing, paused, stopped }
 
-enum OfflinePlayerRepeatMode {
-  off,
-  track,
-  queue,
-}
+enum OfflinePlayerRepeatMode { off, track, queue }
 
-enum OfflinePlayerOutputMode {
-  auto,
-  khz44_1,
-  khz48,
-  khz96,
-}
+enum OfflinePlayerOutputMode { auto, khz44_1, khz48, khz96 }
 
 OfflinePlayerState _stateFromRaw(int value) {
   switch (value) {
@@ -110,9 +92,7 @@ OfflinePlayerState _stateFromRaw(int value) {
     case 4:
       return OfflinePlayerState.stopped;
     default:
-      throw StateError(
-        'Unknown OfflinePlayerState value: $value',
-      );
+      throw StateError('Unknown OfflinePlayerState value: $value');
   }
 }
 
@@ -125,9 +105,7 @@ OfflinePlayerRepeatMode _repeatModeFromRaw(int value) {
     case 2:
       return OfflinePlayerRepeatMode.queue;
     default:
-      throw StateError(
-        'Unknown OfflinePlayerRepeatMode value: $value',
-      );
+      throw StateError('Unknown OfflinePlayerRepeatMode value: $value');
   }
 }
 
@@ -162,8 +140,8 @@ class OfflinePlayer {
   OfflinePlayer._({
     required OfflinePlayerBindings bindings,
     required ffi.Pointer<OfflinePlayerHandle> handle,
-  })  : _bindings = bindings,
-        _handle = handle;
+  }) : _bindings = bindings,
+       _handle = handle;
 
   final OfflinePlayerBindings _bindings;
   ffi.Pointer<OfflinePlayerHandle> _handle;
@@ -174,27 +152,18 @@ class OfflinePlayer {
     required String libraryPath,
     required String dbPath,
   }) {
-    final library = OfflinePlayerBindings.openLibrary(
-      libraryPath,
-    );
+    final library = OfflinePlayerBindings.openLibrary(libraryPath);
 
     final bindings = OfflinePlayerBindings(library);
 
     final dbPathPointer = dbPath.toNativeUtf8();
-    final handleOut =
-        calloc<ffi.Pointer<OfflinePlayerHandle>>();
+    final handleOut = calloc<ffi.Pointer<OfflinePlayerHandle>>();
 
     try {
-      final result = bindings.create(
-        dbPathPointer,
-        handleOut,
-      );
+      final result = bindings.create(dbPathPointer, handleOut);
 
       if (result != 0) {
-        throw OfflinePlayerException(
-          result,
-          'Failed to create OfflinePlayer.',
-        );
+        throw OfflinePlayerException(result, 'Failed to create OfflinePlayer.');
       }
 
       final handle = handleOut.value;
@@ -206,10 +175,7 @@ class OfflinePlayer {
         );
       }
 
-      return OfflinePlayer._(
-        bindings: bindings,
-        handle: handle,
-      );
+      return OfflinePlayer._(bindings: bindings, handle: handle);
     } finally {
       calloc.free(dbPathPointer);
       calloc.free(handleOut);
@@ -295,12 +261,7 @@ class OfflinePlayer {
     final out = calloc<ffi.Int64>();
 
     try {
-      _check(
-        _bindings.trackCount(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.trackCount(_handle, out));
 
       return out.value;
     } finally {
@@ -314,17 +275,50 @@ class OfflinePlayer {
     final out = calloc<ffi.Int64>();
 
     try {
-      _check(
-        _bindings.trackIdAt(
-          _handle,
-          index,
-          out,
-        ),
-      );
+      _check(_bindings.trackIdAt(_handle, index, out));
 
       return out.value;
     } finally {
       calloc.free(out);
+    }
+  }
+
+  /// All library track ids in one native call (same order as
+  /// [getTrackIdAt]). Prefer this over looping [getTrackIdAt]: each
+  /// per-index call re-queries the whole library natively.
+  List<int> getTrackIds() {
+    _ensureNotDisposed();
+
+    final outCount = calloc<ffi.Size>();
+
+    try {
+      // Size from the current count; retry once if the library grew between
+      // the two calls (BufferTooSmall == 7 reports the new size).
+      var capacity = getTrackCount();
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final ids = calloc<ffi.Int64>(capacity > 0 ? capacity : 1);
+
+        try {
+          final result =
+              _bindings.trackIds(_handle, ids, capacity, outCount);
+
+          if (result == 7 && attempt == 0) {
+            capacity = outCount.value;
+            continue;
+          }
+
+          _check(result);
+
+          return List<int>.unmodifiable(ids.asTypedList(outCount.value));
+        } finally {
+          calloc.free(ids);
+        }
+      }
+
+      throw StateError('library changed size while reading track ids');
+    } finally {
+      calloc.free(outCount);
     }
   }
 
@@ -339,14 +333,12 @@ class OfflinePlayer {
     const dateCapacity = 256;
     const genreCapacity = 256;
 
-    final metadata =
-        calloc<OfflinePlayerTrackMetadata>();
+    final metadata = calloc<OfflinePlayerTrackMetadata>();
 
     final title = calloc<ffi.Uint8>(titleCapacity);
     final artist = calloc<ffi.Uint8>(artistCapacity);
     final album = calloc<ffi.Uint8>(albumCapacity);
-    final albumArtist =
-        calloc<ffi.Uint8>(albumArtistCapacity);
+    final albumArtist = calloc<ffi.Uint8>(albumArtistCapacity);
     final composer = calloc<ffi.Uint8>(composerCapacity);
     final date = calloc<ffi.Uint8>(dateCapacity);
     final genre = calloc<ffi.Uint8>(genreCapacity);
@@ -354,66 +346,41 @@ class OfflinePlayer {
     try {
       metadata.ref.trackId = trackId;
 
-      metadata.ref.title =
-          title.cast<Utf8>();
-      metadata.ref.titleCapacity =
-          titleCapacity;
+      metadata.ref.title = title.cast<Utf8>();
+      metadata.ref.titleCapacity = titleCapacity;
 
-      metadata.ref.artist =
-          artist.cast<Utf8>();
-      metadata.ref.artistCapacity =
-          artistCapacity;
+      metadata.ref.artist = artist.cast<Utf8>();
+      metadata.ref.artistCapacity = artistCapacity;
 
-      metadata.ref.album =
-          album.cast<Utf8>();
-      metadata.ref.albumCapacity =
-          albumCapacity;
+      metadata.ref.album = album.cast<Utf8>();
+      metadata.ref.albumCapacity = albumCapacity;
 
-      metadata.ref.albumArtist =
-          albumArtist.cast<Utf8>();
-      metadata.ref.albumArtistCapacity =
-          albumArtistCapacity;
+      metadata.ref.albumArtist = albumArtist.cast<Utf8>();
+      metadata.ref.albumArtistCapacity = albumArtistCapacity;
 
-      metadata.ref.composer =
-          composer.cast<Utf8>();
-      metadata.ref.composerCapacity =
-          composerCapacity;
+      metadata.ref.composer = composer.cast<Utf8>();
+      metadata.ref.composerCapacity = composerCapacity;
 
-      metadata.ref.date =
-          date.cast<Utf8>();
-      metadata.ref.dateCapacity =
-          dateCapacity;
+      metadata.ref.date = date.cast<Utf8>();
+      metadata.ref.dateCapacity = dateCapacity;
 
-      metadata.ref.genre =
-          genre.cast<Utf8>();
-      metadata.ref.genreCapacity =
-          genreCapacity;
+      metadata.ref.genre = genre.cast<Utf8>();
+      metadata.ref.genreCapacity = genreCapacity;
 
-      _check(
-        _bindings.libraryTrackMetadata(
-          _handle,
-          trackId,
-          metadata,
-        ),
-      );
+      _check(_bindings.libraryTrackMetadata(_handle, trackId, metadata));
 
       return TrackMetadata(
         trackId: metadata.ref.trackId,
         title: metadata.ref.title.toDartString(),
         artist: metadata.ref.artist.toDartString(),
         album: metadata.ref.album.toDartString(),
-        albumArtist:
-            metadata.ref.albumArtist.toDartString(),
-        composer:
-            metadata.ref.composer.toDartString(),
+        albumArtist: metadata.ref.albumArtist.toDartString(),
+        composer: metadata.ref.composer.toDartString(),
         date: metadata.ref.date.toDartString(),
         genre: metadata.ref.genre.toDartString(),
-        trackNumber:
-            metadata.ref.trackNumber,
-        discNumber:
-            metadata.ref.discNumber,
-        hasDiscNumber:
-            metadata.ref.hasDiscNumber != 0,
+        trackNumber: metadata.ref.trackNumber,
+        discNumber: metadata.ref.discNumber,
+        hasDiscNumber: metadata.ref.hasDiscNumber != 0,
       );
     } finally {
       calloc.free(metadata);
@@ -428,95 +395,82 @@ class OfflinePlayer {
     }
   }
 
-TrackArtwork? getTrackArtwork(int trackId) {
-  _ensureNotDisposed();
+  TrackArtwork? getTrackArtwork(int trackId) {
+    _ensureNotDisposed();
 
-  final artwork = calloc<OfflinePlayerTrackArtwork>();
+    final artwork = calloc<OfflinePlayerTrackArtwork>();
 
-  try {
-    artwork.ref.trackId = trackId;
-    artwork.ref.mimeType = ffi.nullptr.cast<Utf8>();
-    artwork.ref.mimeTypeCapacity = 0;
-    artwork.ref.mimeTypeSize = 0;
-    artwork.ref.data = ffi.nullptr;
-    artwork.ref.dataCapacity = 0;
-    artwork.ref.dataSize = 0;
+    try {
+      artwork.ref.trackId = trackId;
+      artwork.ref.mimeType = ffi.nullptr.cast<Utf8>();
+      artwork.ref.mimeTypeCapacity = 0;
+      artwork.ref.mimeTypeSize = 0;
+      artwork.ref.data = ffi.nullptr;
+      artwork.ref.dataCapacity = 0;
+      artwork.ref.dataSize = 0;
 
-    /*
+      /*
      * First pass:
      * Ask Rust for the required buffer sizes.
      */
-    final firstResult =
-        _bindings.libraryTrackArtwork(
-      _handle,
-      trackId,
-      artwork,
-    );
+      final firstResult = _bindings.libraryTrackArtwork(
+        _handle,
+        trackId,
+        artwork,
+      );
 
-    // Rust returns NOT_FOUND when the track has no artwork.
-    if (firstResult == 4) {
-      return null;
-    }
+      // Rust returns NOT_FOUND when the track has no artwork.
+      if (firstResult == 4) {
+        return null;
+      }
 
-    // BUFFER_TOO_SMALL is expected during the sizing pass.
-    if (firstResult != 7) {
-      _check(firstResult);
-    }
+      // BUFFER_TOO_SMALL is expected during the sizing pass.
+      if (firstResult != 7) {
+        _check(firstResult);
+      }
 
-    final mimeTypeSize = artwork.ref.mimeTypeSize;
-    final dataSize = artwork.ref.dataSize;
+      final mimeTypeSize = artwork.ref.mimeTypeSize;
+      final dataSize = artwork.ref.dataSize;
 
-    final mimeTypeBuffer = calloc<ffi.Uint8>(
-      mimeTypeSize == 0 ? 1 : mimeTypeSize,
-    );
+      final mimeTypeBuffer = calloc<ffi.Uint8>(
+        mimeTypeSize == 0 ? 1 : mimeTypeSize,
+      );
 
-    final dataBuffer = calloc<ffi.Uint8>(
-      dataSize == 0 ? 1 : dataSize,
-    );
+      final dataBuffer = calloc<ffi.Uint8>(dataSize == 0 ? 1 : dataSize);
 
-    try {
-      /*
+      try {
+        /*
        * Second pass:
        * Provide buffers and ask Rust to copy the artwork.
        */
-      artwork.ref.mimeType =
-          mimeTypeBuffer.cast<Utf8>();
-      artwork.ref.mimeTypeCapacity =
-          mimeTypeSize;
+        artwork.ref.mimeType = mimeTypeBuffer.cast<Utf8>();
+        artwork.ref.mimeTypeCapacity = mimeTypeSize;
 
-      artwork.ref.data = dataBuffer;
-      artwork.ref.dataCapacity =
-          dataSize;
+        artwork.ref.data = dataBuffer;
+        artwork.ref.dataCapacity = dataSize;
 
-      artwork.ref.mimeTypeSize = 0;
-      artwork.ref.dataSize = 0;
+        artwork.ref.mimeTypeSize = 0;
+        artwork.ref.dataSize = 0;
 
-      _check(
-        _bindings.libraryTrackArtwork(
-          _handle,
-          trackId,
-          artwork,
-        ),
-      );
+        _check(_bindings.libraryTrackArtwork(_handle, trackId, artwork));
 
-      final mimeType =
-          artwork.ref.mimeType.toDartString();
+        final mimeType = artwork.ref.mimeType.toDartString();
 
-      final data = Uint8List.fromList(dataBuffer.asTypedList(dataSize));
+        final data = Uint8List.fromList(dataBuffer.asTypedList(dataSize));
 
-      return TrackArtwork(
-        trackId: artwork.ref.trackId,
-        mimeType: mimeType,
-        data: data,
-      );
+        return TrackArtwork(
+          trackId: artwork.ref.trackId,
+          mimeType: mimeType,
+          data: data,
+        );
+      } finally {
+        calloc.free(mimeTypeBuffer);
+        calloc.free(dataBuffer);
+      }
     } finally {
-      calloc.free(mimeTypeBuffer);
-      calloc.free(dataBuffer);
+      calloc.free(artwork);
     }
-  } finally {
-    calloc.free(artwork);
   }
-}
 
   int get sampleRate {
     _ensureNotDisposed();
@@ -570,6 +524,20 @@ TrackArtwork? getTrackArtwork(int trackId) {
     }
   }
 
+  /// The sample rate (Hz) the engine actually negotiated with the output
+  /// device, or 0 when no track is loaded. Ground truth for native vs
+  /// resampled playback.
+  int get effectiveOutputRate {
+    _ensureNotDisposed();
+    final out = calloc<ffi.Uint32>();
+    try {
+      _check(_bindings.effectiveOutputRate(_handle, out));
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   void setOutputMode(OfflinePlayerOutputMode mode) {
     _ensureNotDisposed();
     _check(_bindings.setOutputMode(_handle, mode.index));
@@ -599,28 +567,19 @@ TrackArtwork? getTrackArtwork(int trackId) {
   void loadTrack(int trackId) {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.loadTrack(
-        _handle,
-        trackId,
-      ),
-    );
+    _check(_bindings.loadTrack(_handle, trackId));
   }
 
   void play() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.play(_handle),
-    );
+    _check(_bindings.play(_handle));
   }
 
   void pause() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.pause(_handle),
-    );
+    _check(_bindings.pause(_handle));
   }
 
   void stop() {
@@ -635,19 +594,10 @@ TrackArtwork? getTrackArtwork(int trackId) {
     _ensureNotDisposed();
 
     if (frame < 0) {
-      throw ArgumentError.value(
-        frame,
-        'frame',
-        'Frame cannot be negative.',
-      );
+      throw ArgumentError.value(frame, 'frame', 'Frame cannot be negative.');
     }
 
-    _check(
-      _bindings.seekToFrame(
-        _handle,
-        frame,
-      ),
-    );
+    _check(_bindings.seekToFrame(_handle, frame));
   }
 
   OfflinePlayerState get state {
@@ -656,12 +606,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Int32>();
 
     try {
-      _check(
-        _bindings.state(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.state(_handle, out));
 
       return _stateFromRaw(out.value);
     } finally {
@@ -675,12 +620,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Uint64>();
 
     try {
-      _check(
-        _bindings.currentFrame(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.currentFrame(_handle, out));
 
       return out.value;
     } finally {
@@ -694,12 +634,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Double>();
 
     try {
-      _check(
-        _bindings.currentSeconds(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.currentSeconds(_handle, out));
 
       return out.value;
     } finally {
@@ -713,12 +648,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Double>();
 
     try {
-      _check(
-        _bindings.durationSeconds(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.durationSeconds(_handle, out));
 
       return out.value;
     } finally {
@@ -732,12 +662,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Uint64>();
 
     try {
-      _check(
-        _bindings.totalFrames(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.totalFrames(_handle, out));
 
       return out.value;
     } finally {
@@ -753,32 +678,19 @@ TrackArtwork? getTrackArtwork(int trackId) {
     _ensureNotDisposed();
 
     if (trackIds.isEmpty) {
-      _check(
-        _bindings.queueSet(
-          _handle,
-          ffi.nullptr.cast<ffi.Int64>(),
-          0,
-        ),
-      );
+      _check(_bindings.queueSet(_handle, ffi.nullptr.cast<ffi.Int64>(), 0));
 
       return;
     }
 
-    final ids =
-        calloc<ffi.Int64>(trackIds.length);
+    final ids = calloc<ffi.Int64>(trackIds.length);
 
     try {
       for (var i = 0; i < trackIds.length; i++) {
         ids[i] = trackIds[i];
       }
 
-      _check(
-        _bindings.queueSet(
-          _handle,
-          ids,
-          trackIds.length,
-        ),
-      );
+      _check(_bindings.queueSet(_handle, ids, trackIds.length));
     } finally {
       calloc.free(ids);
     }
@@ -787,9 +699,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
   void clearQueue() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queueClear(_handle),
-    );
+    _check(_bindings.queueClear(_handle));
   }
 
   void addToQueue(int trackId) {
@@ -803,12 +713,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Uint64>();
 
     try {
-      _check(
-        _bindings.queueLength(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.queueLength(_handle, out));
 
       return out.value;
     } finally {
@@ -866,12 +771,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Uint64>();
 
     try {
-      _check(
-        _bindings.queueCurrentIndex(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.queueCurrentIndex(_handle, out));
 
       return out.value;
     } finally {
@@ -885,12 +785,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Int64>();
 
     try {
-      _check(
-        _bindings.queueCurrentTrackId(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.queueCurrentTrackId(_handle, out));
 
       return out.value;
     } finally {
@@ -904,32 +799,18 @@ TrackArtwork? getTrackArtwork(int trackId) {
     final out = calloc<ffi.Int32>();
 
     try {
-      _check(
-        _bindings.queueRepeatMode(
-          _handle,
-          out,
-        ),
-      );
+      _check(_bindings.queueRepeatMode(_handle, out));
 
-      return _repeatModeFromRaw(
-        out.value,
-      );
+      return _repeatModeFromRaw(out.value);
     } finally {
       calloc.free(out);
     }
   }
 
-  void setRepeatMode(
-    OfflinePlayerRepeatMode mode,
-  ) {
+  void setRepeatMode(OfflinePlayerRepeatMode mode) {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queueSetRepeatMode(
-        _handle,
-        mode.index,
-      ),
-    );
+    _check(_bindings.queueSetRepeatMode(_handle, mode.index));
   }
 
   void selectQueueIndex(int index) {
@@ -943,12 +824,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
       );
     }
 
-    _check(
-      _bindings.queueSelect(
-        _handle,
-        index,
-      ),
-    );
+    _check(_bindings.queueSelect(_handle, index));
   }
 
   void selectAndLoadQueueIndex(int index) {
@@ -962,20 +838,13 @@ TrackArtwork? getTrackArtwork(int trackId) {
       );
     }
 
-    _check(
-      _bindings.queueSelectAndLoad(
-        _handle,
-        index,
-      ),
-    );
+    _check(_bindings.queueSelectAndLoad(_handle, index));
   }
 
   void playCurrentQueueTrack() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queuePlayCurrent(_handle),
-    );
+    _check(_bindings.queuePlayCurrent(_handle));
   }
 
   void selectAndPlayQueueIndex(int index) {
@@ -989,75 +858,49 @@ TrackArtwork? getTrackArtwork(int trackId) {
       );
     }
 
-    _check(
-      _bindings.queueSelectAndPlay(
-        _handle,
-        index,
-      ),
-    );
+    _check(_bindings.queueSelectAndPlay(_handle, index));
   }
 
   void nextQueue() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queueNext(_handle),
-    );
+    _check(_bindings.queueNext(_handle));
   }
 
   void nextQueueAndPlay() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queueNextAndPlay(_handle),
-    );
+    _check(_bindings.queueNextAndPlay(_handle));
   }
 
   void previousQueue() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queuePrevious(_handle),
-    );
+    _check(_bindings.queuePrevious(_handle));
   }
 
   void previousQueueAndPlay() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queuePreviousAndPlay(
-        _handle,
-      ),
-    );
+    _check(_bindings.queuePreviousAndPlay(_handle));
   }
 
   void repeatCurrentQueueTrackAndPlay() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queueRepeatCurrentAndPlay(
-        _handle,
-      ),
-    );
+    _check(_bindings.queueRepeatCurrentAndPlay(_handle));
   }
 
   void advanceQueueAndPlay() {
     _ensureNotDisposed();
 
-    _check(
-      _bindings.queueAdvanceAndPlay(
-        _handle,
-      ),
-    );
+    _check(_bindings.queueAdvanceAndPlay(_handle));
   }
 
   bool advanceQueueIfAtEnd() {
     _ensureNotDisposed();
 
-    final result =
-        _bindings.queueAdvanceIfAtEnd(
-      _handle,
-    );
+    final result = _bindings.queueAdvanceIfAtEnd(_handle);
 
     if (result == 0) {
       return true;
@@ -1086,9 +929,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
 
   void _ensureNotDisposed() {
     if (_disposed) {
-      throw StateError(
-        'OfflinePlayer has already been disposed.',
-      );
+      throw StateError('OfflinePlayer has already been disposed.');
     }
   }
 
@@ -1101,9 +942,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
 
     throw OfflinePlayerException(
       result,
-      message.isEmpty
-          ? 'OfflinePlayer operation failed.'
-          : message,
+      message.isEmpty ? 'OfflinePlayer operation failed.' : message,
     );
   }
 
@@ -1123,9 +962,7 @@ TrackArtwork? getTrackArtwork(int trackId) {
         return '';
       }
 
-      return buffer
-          .cast<Utf8>()
-          .toDartString();
+      return buffer.cast<Utf8>().toDartString();
     } finally {
       calloc.free(buffer);
     }
