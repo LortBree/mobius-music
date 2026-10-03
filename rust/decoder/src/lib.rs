@@ -2,15 +2,13 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     thread,
     time::Duration,
 };
 
-use offline_player_audio_core::{
-    EqualizerSettings, GraphicEqualizer, LinearResampler, PcmProducer, ResamplerError,
-};
+use offline_player_audio_core::{LinearResampler, PcmProducer, ResamplerError};
 
 use symphonia::core::{
     audio::{Audio, GenericAudioBufferRef},
@@ -227,36 +225,9 @@ pub fn stream_to_pcm_i32_controlled_at_rate(
     paused: &AtomicBool,
     target_sample_rate: Option<u32>,
 ) -> Result<StreamStats, StreamError> {
-    let (_actual_start_frame, stats) = stream_internal(
-        path,
-        producer,
-        cancel,
-        paused,
-        None,
-        target_sample_rate,
-        None,
-    )?;
+    let (_actual_start_frame, stats) =
+        stream_internal(path, producer, cancel, paused, None, target_sample_rate)?;
 
-    Ok(stats)
-}
-
-pub fn stream_to_pcm_i32_controlled_at_rate_with_equalizer(
-    path: &Path,
-    producer: &mut PcmProducer,
-    cancel: &AtomicBool,
-    paused: &AtomicBool,
-    target_sample_rate: Option<u32>,
-    gains_db: Arc<RwLock<[f32; 10]>>,
-) -> Result<StreamStats, StreamError> {
-    let (_actual_start_frame, stats) = stream_internal(
-        path,
-        producer,
-        cancel,
-        paused,
-        None,
-        target_sample_rate,
-        Some(gains_db),
-    )?;
     Ok(stats)
 }
 
@@ -295,27 +266,6 @@ pub fn stream_to_pcm_i32_from_frame_at_rate(
         paused,
         Some(target_frame),
         target_sample_rate,
-        None,
-    )
-}
-
-pub fn stream_to_pcm_i32_from_frame_at_rate_with_equalizer(
-    path: &Path,
-    target_frame: u64,
-    producer: &mut PcmProducer,
-    cancel: &AtomicBool,
-    paused: &AtomicBool,
-    target_sample_rate: Option<u32>,
-    gains_db: Arc<RwLock<[f32; 10]>>,
-) -> Result<(u64, StreamStats), StreamError> {
-    stream_internal(
-        path,
-        producer,
-        cancel,
-        paused,
-        Some(target_frame),
-        target_sample_rate,
-        Some(gains_db),
     )
 }
 
@@ -326,7 +276,6 @@ fn stream_internal(
     paused: &AtomicBool,
     seek_frame: Option<u64>,
     target_sample_rate: Option<u32>,
-    equalizer_gains: Option<Arc<RwLock<[f32; 10]>>>,
 ) -> Result<(u64, StreamStats), StreamError> {
     if cancel.load(Ordering::Acquire) {
         return Err(StreamError::Cancelled);
@@ -395,9 +344,6 @@ fn stream_internal(
     } else {
         None
     };
-    let mut equalizer = equalizer_gains
-        .as_ref()
-        .map(|_| GraphicEqualizer::new(output_sample_rate, channels, source_bits));
 
     let decoder_options = AudioDecoderOptions::default().gapless(true).verify(true);
 
@@ -571,18 +517,6 @@ fn stream_internal(
                 .process(&source_samples, &mut output_samples)
                 .map_err(StreamError::Resampler)?;
 
-            if let (Some(equalizer), Some(gains)) = (equalizer.as_mut(), equalizer_gains.as_ref()) {
-                let gains_db = *gains.read().unwrap_or_else(|error| error.into_inner());
-                equalizer.process(&mut output_samples, EqualizerSettings { gains_db });
-            }
-
-            pushed_samples += push_samples_controlled(producer, &output_samples, cancel, paused)?;
-        } else if let (Some(equalizer), Some(gains)) =
-            (equalizer.as_mut(), equalizer_gains.as_ref())
-        {
-            let mut output_samples = source_samples;
-            let gains_db = *gains.read().unwrap_or_else(|error| error.into_inner());
-            equalizer.process(&mut output_samples, EqualizerSettings { gains_db });
             pushed_samples += push_samples_controlled(producer, &output_samples, cancel, paused)?;
         } else {
             pushed_samples += push_samples_controlled(producer, &source_samples, cancel, paused)?;
@@ -596,11 +530,6 @@ fn stream_internal(
         resampler
             .flush(&mut output_samples)
             .map_err(StreamError::Resampler)?;
-
-        if let (Some(equalizer), Some(gains)) = (equalizer.as_mut(), equalizer_gains.as_ref()) {
-            let gains_db = *gains.read().unwrap_or_else(|error| error.into_inner());
-            equalizer.process(&mut output_samples, EqualizerSettings { gains_db });
-        }
 
         pushed_samples += push_samples_controlled(producer, &output_samples, cancel, paused)?;
     }

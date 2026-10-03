@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -5,6 +7,7 @@ import '../core/ffi/offline_player.dart';
 import '../features/library/data/ffi_library_repository.dart';
 import 'mobius_shell.dart';
 import 'theme/mobius_theme.dart';
+import '../playback/playback_settings.dart';
 import '../playback/player_controller.dart';
 
 /// Lets descendants (the Settings page) read and change the app theme mode
@@ -18,10 +21,7 @@ class ThemeModeController {
 }
 
 class MobiusApp extends StatefulWidget {
-  const MobiusApp({
-    super.key,
-    required this.player,
-  });
+  const MobiusApp({super.key, required this.player});
 
   final OfflinePlayer player;
 
@@ -42,8 +42,12 @@ class _MobiusAppState extends State<MobiusApp> {
     super.initState();
 
     _libraryRepository = FfiLibraryRepository(widget.player);
-    _playerController = PlayerController(widget.player);
+    _playerController = PlayerController(
+      widget.player,
+      onVolumeChanged: PlaybackSettings.saveVolumeSoon,
+    );
 
+    unawaited(PlaybackSettings.restore(_playerController));
     _loadThemeMode();
   }
 
@@ -70,7 +74,7 @@ class _MobiusAppState extends State<MobiusApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Mobius',
+      title: 'Mobius Music',
       theme: MobiusTheme.light(),
       darkTheme: MobiusTheme.dark(),
       themeMode: _themeMode,

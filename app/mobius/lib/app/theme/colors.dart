@@ -39,16 +39,27 @@ abstract final class MobiusColors {
   /// Primary readable text.
   static Color textOf(BuildContext c) => MobiusSurfaces.of(c).textPrimary;
 
+  /// "Native" (bit-perfect) status. The pale green reads on dark; on the
+  /// light stone base it needs a deep green to stay legible (5:1+).
+  static Color nativeOf(BuildContext c) =>
+      Theme.of(c).brightness == Brightness.dark
+      ? native
+      : const Color(0xFF1F6B3E);
+
+  /// "Resampled" (compatible) status, likewise deepened for light mode.
+  static Color compatibleOf(BuildContext c) =>
+      Theme.of(c).brightness == Brightness.dark
+      ? compatible
+      : const Color(0xFF7A5200);
+
   /// Dimmed / secondary text.
   static Color textDimOf(BuildContext c) => MobiusSurfaces.of(c).textSecondary;
 
   /// Panel / card surface (a step off the background).
-  static Color panelOf(BuildContext c) =>
-      Theme.of(c).colorScheme.surface;
+  static Color panelOf(BuildContext c) => Theme.of(c).colorScheme.surface;
 
   /// Base background.
-  static Color backgroundOf(BuildContext c) =>
-      MobiusSurfaces.of(c).background;
+  static Color backgroundOf(BuildContext c) => MobiusSurfaces.of(c).background;
 
   /// Header / top-bar surface.
   static Color headerOf(BuildContext c) => MobiusSurfaces.of(c).header;

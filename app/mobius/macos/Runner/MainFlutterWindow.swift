@@ -12,10 +12,20 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
 
   private var activeSecurityScopedURLs: [String: URL] = [:]
 
+  /// Held while audio is playing so macOS does not App-Nap the process when
+  /// the window is minimized or on another Space. Without it the decoder
+  /// thread that refills the PCM ring is throttled and playback stalls in the
+  /// background. Standard music-player behavior: also keeps the Mac awake
+  /// (`.idleSystemSleepDisabled`) while music plays.
+  private var playbackActivityToken: NSObjectProtocol?
+
   override func awakeFromNib() {
     super.awakeFromNib()
 
     self.delegate = self
+    // User-facing name. PRODUCT_NAME stays "mobius" so the bundle path
+    // (mobius.app), test host and release workflow keep working.
+    self.title = "Mobius Music"
 
     let flutterViewController = FlutterViewController()
     self.contentViewController = flutterViewController
@@ -47,15 +57,81 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
       with: flutterViewController
     )
 
+    registerPlaybackActivityChannel(
+      with: flutterViewController
+    )
+
     RegisterGeneratedPlugins(
       registry: flutterViewController
     )
   }
 
   deinit {
+    endPlaybackActivity()
+
     for url in activeSecurityScopedURLs.values {
       url.stopAccessingSecurityScopedResource()
     }
+  }
+
+  private func registerPlaybackActivityChannel(
+    with flutterViewController: FlutterViewController
+  ) {
+    let channel = FlutterMethodChannel(
+      name: "mobius/playback_activity",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self else {
+        result(
+          FlutterError(
+            code: "WINDOW_UNAVAILABLE",
+            message: "Mobius window is unavailable.",
+            details: nil
+          )
+        )
+        return
+      }
+
+      switch call.method {
+      case "start":
+        self.beginPlaybackActivity()
+        result(true)
+
+      case "stop":
+        self.endPlaybackActivity()
+        result(true)
+
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  /// Starts an activity assertion so macOS keeps the process fully scheduled
+  /// (no App Nap) and awake while audio plays. Idempotent: a second `start`
+  /// without an intervening `stop` is a no-op, so repeated play commands are
+  /// safe.
+  private func beginPlaybackActivity() {
+    if playbackActivityToken != nil {
+      return
+    }
+
+    playbackActivityToken = ProcessInfo.processInfo.beginActivity(
+      options: [.userInitiated, .idleSystemSleepDisabled],
+      reason: "Playing audio"
+    )
+  }
+
+  /// Releases the activity assertion. Idempotent.
+  private func endPlaybackActivity() {
+    guard let token = playbackActivityToken else {
+      return
+    }
+
+    ProcessInfo.processInfo.endActivity(token)
+    playbackActivityToken = nil
   }
 
   private func registerSecurityScopedBookmarkChannel(

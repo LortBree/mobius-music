@@ -5,7 +5,10 @@ use std::{
     ffi::c_void,
     ptr::NonNull,
     slice,
-    sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use objc2_core_audio::{
@@ -22,7 +25,7 @@ use objc2_core_audio::{
 
 use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 
-use offline_player_audio_core::PcmConsumer;
+use offline_player_audio_core::{PcmConsumer, RealtimeEqualizer, SharedEqualizerGains};
 
 #[derive(Debug)]
 pub enum MacAudioError {
@@ -610,6 +613,15 @@ struct PlaybackState {
     source_bits: u32,
     volume: AtomicU32,
 
+    //
+    // Applied here, right before the samples reach the device, so a gain
+    // change is heard within one I/O buffer instead of after the seconds
+    // of audio already queued in the PCM ring. `scratch` is allocated up
+    // front: the callback must never allocate or lock.
+    //
+    equalizer: Option<RealtimeEqualizer>,
+    scratch: Vec<i32>,
+
     callback_count: AtomicU64,
 
     requested_samples: AtomicU64,
@@ -720,17 +732,40 @@ unsafe extern "C-unwind" fn pcm_io_proc(
     };
 
     let mut consumed = 0usize;
+    let volume = f32::from_bits(state.volume.load(Ordering::Relaxed));
 
-    while consumed < output.len() {
-        let sample = match state.consumer.try_pop() {
-            Ok(sample) => sample,
-            Err(_) => break,
-        };
+    if let Some(equalizer) = state.equalizer.as_mut() {
+        while consumed < output.len() {
+            let want = (output.len() - consumed).min(state.scratch.len());
+            let chunk = &mut state.scratch[..want];
+            let got = state.consumer.pop_slice(chunk);
+            if got == 0 {
+                break;
+            }
+            let chunk = &mut chunk[..got];
+            equalizer.process(chunk);
+            for (out, &sample) in output[consumed..consumed + got]
+                .iter_mut()
+                .zip(chunk.iter())
+            {
+                *out = (sample as f32 / divisor) * volume;
+            }
+            consumed += got;
+            if got < want {
+                break;
+            }
+        }
+    } else {
+        while consumed < output.len() {
+            let sample = match state.consumer.try_pop() {
+                Ok(sample) => sample,
+                Err(_) => break,
+            };
 
-        let volume = f32::from_bits(state.volume.load(Ordering::Relaxed));
-        output[consumed] = (sample as f32 / divisor) * volume;
+            output[consumed] = (sample as f32 / divisor) * volume;
 
-        consumed += 1;
+            consumed += 1;
+        }
     }
 
     state
@@ -796,6 +831,26 @@ impl PcmOutput {
         source_channels: u32,
         source_bits: u32,
     ) -> Result<Self, MacAudioError> {
+        Self::open_with_equalizer(
+            device_id,
+            consumer,
+            source_sample_rate,
+            source_channels,
+            source_bits,
+            None,
+        )
+    }
+
+    /// Like `open`, with the equalizer applied in the output callback and
+    /// following `equalizer` live.
+    pub fn open_with_equalizer(
+        device_id: AudioObjectID,
+        consumer: PcmConsumer,
+        source_sample_rate: u32,
+        source_channels: u32,
+        source_bits: u32,
+        equalizer: Option<Arc<SharedEqualizerGains>>,
+    ) -> Result<Self, MacAudioError> {
         let format = output_virtual_format(device_id)?;
 
         //
@@ -859,10 +914,32 @@ impl PcmOutput {
             return Err(MacAudioError::InvalidOutputFormat);
         }
 
+        //
+        // Larger than any I/O buffer CoreAudio asks for in practice; a
+        // bigger request is simply processed in several chunks.
+        //
+        const SCRATCH_SAMPLES: usize = 16_384;
+
+        let equalizer = equalizer.map(|shared| {
+            RealtimeEqualizer::new(
+                shared,
+                source_sample_rate,
+                source_channels as usize,
+                source_bits,
+            )
+        });
+        let scratch = if equalizer.is_some() {
+            vec![0; SCRATCH_SAMPLES]
+        } else {
+            Vec::new()
+        };
+
         let state = Box::new(PlaybackState {
             consumer,
             source_bits,
             volume: AtomicU32::new(1.0f32.to_bits()),
+            equalizer,
+            scratch,
 
             callback_count: AtomicU64::new(0),
 

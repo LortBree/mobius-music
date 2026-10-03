@@ -131,21 +131,39 @@ impl Scanner {
             return Ok(());
         }
 
-        let mut entries = fs::read_dir(path)
-            .map_err(|source| ScannerError::Io {
-                path: path.to_path_buf(),
-                source,
-            })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|source| ScannerError::Io {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path).map_err(|source| ScannerError::Io {
+            path: path.to_path_buf(),
+            source,
+        })? {
+            match entry {
+                Ok(entry) => entries.push(entry),
+                Err(source) => result.errors.push(ScanErrorRecord {
+                    path: path.to_path_buf(),
+                    error: ScannerError::Io {
+                        path: path.to_path_buf(),
+                        source,
+                    }
+                    .to_string(),
+                }),
+            }
+        }
 
         entries.sort_by_key(|entry| entry.file_name());
 
+        // One unreadable subfolder or broken link must not abort the whole
+        // library scan: record it and keep going. The recorded error still
+        // suppresses missing-file cleanup, so nothing under it is dropped
+        // from the library just because it could not be read this time.
+        // Only the scan root itself failing is fatal.
         for entry in entries {
-            self.scan_directory_inner(&entry.path(), result)?;
+            let entry_path = entry.path();
+            if let Err(error) = self.scan_directory_inner(&entry_path, result) {
+                result.errors.push(ScanErrorRecord {
+                    path: entry_path,
+                    error: error.to_string(),
+                });
+            }
         }
 
         Ok(())
@@ -538,6 +556,43 @@ mod tests {
         assert!(is_cue_file(Path::new("album.cue")));
 
         assert!(!is_cue_file(Path::new("album.flac")));
+    }
+
+    #[test]
+    fn broken_entry_is_recorded_instead_of_aborting_the_scan() {
+        let root = std::env::temp_dir().join(format!(
+            "mobius-scan-broken-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("a")).unwrap();
+        fs::write(root.join("a/notes.txt"), b"x").unwrap();
+        // A dangling link makes fs::metadata fail for that one entry.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("missing-target"), root.join("b-dangling")).unwrap();
+        fs::write(root.join("c.txt"), b"y").unwrap();
+
+        let result = Scanner::new().scan_directory(&root);
+        let _ = fs::remove_dir_all(&root);
+
+        let result = result.expect("an unreadable entry must not fail the whole scan");
+        // Entries on both sides of the broken one were still visited.
+        assert!(result
+            .ignored_files
+            .iter()
+            .any(|p| p.ends_with("a/notes.txt")));
+        assert!(result.ignored_files.iter().any(|p| p.ends_with("c.txt")));
+        #[cfg(unix)]
+        assert!(result.errors.iter().any(|e| e.path.ends_with("b-dangling")));
+    }
+
+    #[test]
+    fn unreadable_root_is_still_an_error() {
+        let missing = std::env::temp_dir().join("mobius-scan-root-that-does-not-exist");
+        assert!(Scanner::new().scan_directory(&missing).is_err());
     }
 
     #[test]

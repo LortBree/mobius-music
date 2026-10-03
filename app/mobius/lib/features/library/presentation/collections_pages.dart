@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../core/cache/lru_cache.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../data/ffi_library_repository.dart';
@@ -188,7 +189,7 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
+      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -413,7 +414,10 @@ class _PlaylistCard extends StatelessWidget {
             name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: MobiusColors.textOf(context), fontWeight: FontWeight.w600),
+            style: TextStyle(
+              color: MobiusColors.textOf(context),
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -491,7 +495,7 @@ class _PlaylistDetailPage extends StatefulWidget {
 }
 
 class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
-  final Map<int, ImageProvider> _artworkCache = {};
+  final LruCache<int, ImageProvider?> _artworkCache = LruCache(64);
   late final List<TrackMetadata> _tracks = widget.trackIds
       .map((id) {
         try {
@@ -533,29 +537,30 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
     );
   }
 
-  void _play(int index) {
-    widget.playerController.setQueue(
-      _tracks.map((track) => track.trackId).toList(),
-    );
-    widget.playerController.selectAndPlay(index);
+  Future<void> _play(int index) async {
+    try {
+      widget.playerController.setQueue(
+        _tracks.map((track) => track.trackId).toList(),
+      );
+      await widget.playerController.selectAndPlay(index);
+    } catch (error) {
+      if (mounted) _showCollectionError(context, error);
+    }
   }
 
   ImageProvider? _artworkFor(int trackId) {
-    final cached = _artworkCache[trackId];
-    if (cached != null) return cached;
+    if (_artworkCache.containsKey(trackId)) return _artworkCache.get(trackId);
+    ImageProvider? image;
     try {
       final artwork = widget.repository.getTrackArtwork(trackId);
-      if (artwork == null || artwork.isEmpty) return null;
-      final image = ResizeImage(
-        MemoryImage(artwork.data),
-        width: 96,
-        height: 96,
-      );
-      _artworkCache[trackId] = image;
-      return image;
+      if (artwork != null && !artwork.isEmpty) {
+        image = ResizeImage(MemoryImage(artwork.data), width: 96, height: 96);
+      }
     } catch (_) {
       return null;
     }
+    _artworkCache.put(trackId, image);
+    return image;
   }
 
   int get _safeCurrentTrackId {
@@ -616,7 +621,10 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
               const SizedBox(width: 12),
               Text(
                 '${_tracks.length} ${_tracks.length == 1 ? 'song' : 'songs'}',
-                style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
+                style: TextStyle(
+                  color: MobiusColors.textDimOf(context),
+                  fontSize: 13,
+                ),
               ),
             ],
           ),
@@ -996,7 +1004,10 @@ class _PlaylistTrackRow extends StatelessWidget {
                           : track.album,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 28),
@@ -1058,6 +1069,9 @@ class _CollectionHeading extends StatelessWidget {
       color: MobiusColors.textOf(context),
       fontSize: 42,
       fontWeight: FontWeight.w600,
+      // Match SettingsPageHeader's tight line box so every page title sits at
+      // the same height above the page padding.
+      height: 1.05,
     ),
   );
 }
@@ -1068,8 +1082,10 @@ class _TableLabel extends StatelessWidget {
   final String text;
 
   @override
-  Widget build(BuildContext context) =>
-      Text(text, style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13));
+  Widget build(BuildContext context) => Text(
+    text,
+    style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
+  );
 }
 
 void _showCollectionError(BuildContext context, Object error) {

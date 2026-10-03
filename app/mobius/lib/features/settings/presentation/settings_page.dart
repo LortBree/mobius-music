@@ -1,12 +1,13 @@
 import 'package:file_selector/file_selector.dart';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../app/theme/colors.dart';
 import '../../../app/mobius_app.dart' show ThemeModeController;
-import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../../library/data/ffi_library_repository.dart';
+import 'settings_widgets.dart';
 import '../../../core/macos/macos_folder_access.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -29,33 +30,6 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   static const String _musicFoldersKey = 'music_folders';
-  static const String _equalizerGainsKey = 'equalizer_gains_v1';
-  static const String _equalizerEnabledKey = 'equalizer_enabled_v1';
-
-  static const List<double> _flatGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-  static const List<double> _equalizerFrequencies = [
-    31,
-    62,
-    125,
-    250,
-    500,
-    1000,
-    2000,
-    4000,
-    8000,
-    16000,
-  ];
-  static const Map<String, List<double>> _equalizerPresets = {
-    'Flat': _flatGains,
-    'Bass boost': [-2, 3, 4, 2, 0, 0, 0, 0, 1, 1],
-    'Treble boost': [0, 0, 0, 0, 0, 0, 1, 2, 3, 3],
-    'Vocal': [-2, -1, 0, 1, 2, 2, 1, 0, -1, -2],
-  };
-
-  late OfflinePlayerOutputMode _outputMode;
-  List<double> _equalizerGains = List<double>.from(_flatGains);
-  bool _equalizerEnabled = false;
-  String _selectedEqualizerPreset = 'Flat';
 
   List<String> _musicFolders = [];
   bool _loadingFolders = true;
@@ -65,220 +39,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
 
-    _outputMode = widget.playerController.outputMode;
     _loadMusicFolders();
-    _loadEqualizerSettings();
-  }
-
-  Future<void> _loadEqualizerSettings() async {
-    final preferences = await SharedPreferences.getInstance();
-    final storedGains = preferences.getStringList(_equalizerGainsKey);
-    final gains = storedGains == null || storedGains.length != 10
-        ? List<double>.from(_flatGains)
-        : storedGains.map<double>((value) {
-            final parsed = double.tryParse(value) ?? 0;
-            return parsed.isFinite ? parsed.clamp(-12.0, 12.0).toDouble() : 0.0;
-          }).toList();
-    final enabled = preferences.getBool(_equalizerEnabledKey) ?? false;
-    if (!mounted) return;
-    setState(() {
-      _equalizerGains = gains;
-      _equalizerEnabled = enabled;
-      _selectedEqualizerPreset = _presetFor(gains);
-    });
-    _applyEqualizer();
-  }
-
-  String _presetFor(List<double> gains) {
-    for (final entry in _equalizerPresets.entries) {
-      if (List.generate(
-        10,
-        (index) => (entry.value[index] - gains[index]).abs(),
-      ).every((difference) => difference < 0.01)) {
-        return entry.key;
-      }
-    }
-    return 'Custom';
-  }
-
-  Future<void> _saveEqualizerSettings() async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(
-      _equalizerGainsKey,
-      _equalizerGains.map((gain) => gain.toString()).toList(),
-    );
-    await preferences.setBool(_equalizerEnabledKey, _equalizerEnabled);
-  }
-
-  void _applyEqualizer() {
-    widget.playerController.setEqualizerGains(
-      _equalizerEnabled ? _equalizerGains : _flatGains,
-    );
-  }
-
-  void _updateEqualizer({
-    List<double>? gains,
-    bool? enabled,
-    String? preset,
-    bool persist = true,
-  }) {
-    setState(() {
-      if (gains != null) _equalizerGains = gains;
-      if (enabled != null) _equalizerEnabled = enabled;
-      _selectedEqualizerPreset = preset ?? _presetFor(_equalizerGains);
-    });
-    _applyEqualizer();
-    if (persist) _saveEqualizerSettings();
-  }
-
-  Widget _buildEqualizer() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: MobiusColors.panelOf(context),
-        border: Border.all(color: MobiusColors.borderOf(context)),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Equalizer',
-                      style: TextStyle(
-                        color: MobiusColors.textOf(context),
-                        fontSize: 15,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    SizedBox(height: 5),
-                    Text(
-                      'Adjust ten frequency bands while listening.',
-                      style: TextStyle(
-                        color: MobiusColors.textDimOf(context),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              DropdownButton<String>(
-                value: _selectedEqualizerPreset == 'Custom'
-                    ? 'Custom'
-                    : _selectedEqualizerPreset,
-                dropdownColor: MobiusColors.panelOf(context),
-                underline: const SizedBox.shrink(),
-                items: [
-                  ..._equalizerPresets.keys.map(
-                    (preset) =>
-                        DropdownMenuItem(value: preset, child: Text(preset)),
-                  ),
-                  if (_selectedEqualizerPreset == 'Custom')
-                    const DropdownMenuItem(
-                      value: 'Custom',
-                      child: Text('Custom'),
-                    ),
-                ],
-                onChanged: (preset) {
-                  if (preset == null || preset == 'Custom') return;
-                  _updateEqualizer(
-                    gains: List<double>.from(_equalizerPresets[preset]!),
-                    preset: preset,
-                  );
-                },
-              ),
-              const SizedBox(width: 8),
-              Switch.adaptive(
-                value: _equalizerEnabled,
-                activeTrackColor: MobiusColors.accentOf(context),
-                onChanged: (enabled) => _updateEqualizer(enabled: enabled),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Opacity(
-            opacity: _equalizerEnabled ? 1 : 0.48,
-            child: IgnorePointer(
-              ignoring: !_equalizerEnabled,
-              child: Wrap(
-                alignment: WrapAlignment.spaceBetween,
-                spacing: 8,
-                runSpacing: 12,
-                children: List.generate(_equalizerFrequencies.length, (index) {
-                  final frequency = _equalizerFrequencies[index];
-                  return SizedBox(
-                    width: 56,
-                    child: Column(
-                      children: [
-                        Text(
-                          '${_equalizerGains[index].toStringAsFixed(1)} dB',
-                          style: TextStyle(
-                            color: MobiusColors.textDimOf(context),
-                            fontSize: 10,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        SizedBox(
-                          width: 38,
-                          height: 148,
-                          child: RotatedBox(
-                            quarterTurns: 3,
-                            child: SizedBox(
-                              width: 148,
-                              child: Slider(
-                                value: _equalizerGains[index],
-                                min: -12,
-                                max: 12,
-                                divisions: 48,
-                                activeColor: MobiusColors.accentOf(context),
-                                onChanged: (value) {
-                                  final gains = List<double>.from(
-                                    _equalizerGains,
-                                  );
-                                  gains[index] = value;
-                                  _updateEqualizer(
-                                    gains: gains,
-                                    persist: false,
-                                  );
-                                },
-                                onChangeEnd: (value) {
-                                  final gains = List<double>.from(
-                                    _equalizerGains,
-                                  );
-                                  gains[index] = value;
-                                  _updateEqualizer(gains: gains);
-                                },
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          frequency >= 1000
-                              ? '${(frequency / 1000).toStringAsFixed(frequency % 1000 == 0 ? 0 : 1)}k'
-                              : '${frequency.toInt()}',
-                          style: TextStyle(
-                            color: MobiusColors.textDimOf(context),
-                            fontSize: 10,
-                            fontFamily: 'monospace',
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _loadMusicFolders() async {
@@ -491,26 +252,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  void _setOutputMode(OfflinePlayerOutputMode mode) {
-    if (mode == _outputMode) {
-      return;
-    }
-
-    try {
-      widget.playerController.setOutputMode(mode);
-
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _outputMode = mode;
-      });
-    } catch (error) {
-      _showError(error);
-    }
-  }
-
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -531,186 +272,18 @@ class _SettingsPageState extends State<SettingsPage> {
       ..showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
-  String _outputModeLabel(OfflinePlayerOutputMode mode) {
-    switch (mode) {
-      case OfflinePlayerOutputMode.auto:
-        return 'Auto';
-      case OfflinePlayerOutputMode.khz44_1:
-        return '44.1 kHz';
-      case OfflinePlayerOutputMode.khz48:
-        return '48 kHz';
-      case OfflinePlayerOutputMode.khz96:
-        return '96 kHz';
-    }
-  }
-
-  String _outputModeDescriptionFor(OfflinePlayerOutputMode mode) {
-    switch (mode) {
-      case OfflinePlayerOutputMode.auto:
-        return 'Play at the highest rate the output device supports, matching '
-            'the source when possible (bit-perfect).';
-      case OfflinePlayerOutputMode.khz44_1:
-        return 'Use 44.1 kHz as the maximum output rate. Higher-rate sources are resampled.';
-      case OfflinePlayerOutputMode.khz48:
-        return 'Use 48 kHz as the maximum output rate. Higher-rate sources are resampled.';
-      case OfflinePlayerOutputMode.khz96:
-        return 'Use 96 kHz as the maximum output rate when the device supports it.';
-    }
-  }
-
-  Widget _sectionTitle(String title) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-        fontSize: 18,
-        fontWeight: FontWeight.w600,
-      ),
-    );
-  }
-
-  Widget _settingRow({
-    required String title,
-    required String description,
-    required Widget trailing,
-  }) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 72),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        color: MobiusColors.panelOf(context),
-        border: Border.all(color: MobiusColors.borderOf(context)),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  description,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(height: 1.35),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 32),
-          trailing,
-        ],
-      ),
-    );
-  }
-
-  Widget _outputModeSelector() {
-    const modes = <OfflinePlayerOutputMode>[
-      OfflinePlayerOutputMode.auto,
-      OfflinePlayerOutputMode.khz44_1,
-      OfflinePlayerOutputMode.khz48,
-    ];
-
-    return SizedBox(
-      width: 170,
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<OfflinePlayerOutputMode>(
-          value: _outputMode,
-          isExpanded: true,
-          dropdownColor: MobiusColors.panelOf(context),
-          borderRadius: BorderRadius.circular(8),
-          icon: Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: MobiusColors.textDimOf(context),
-          ),
-          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 14),
-          items: [
-            for (final mode in modes)
-              DropdownMenuItem<OfflinePlayerOutputMode>(
-                value: mode,
-                child: Text(_outputModeLabel(mode)),
-              ),
-          ],
-          onChanged: (mode) {
-            if (mode != null) {
-              _setOutputMode(mode);
-            }
-          },
-        ),
-      ),
-    );
-  }
-
   Widget _themeSelector() {
-    const modes = <ThemeMode>[
-      ThemeMode.dark,
-      ThemeMode.light,
-      ThemeMode.system,
-    ];
-
     String label(ThemeMode mode) => switch (mode) {
       ThemeMode.dark => 'Dark',
       ThemeMode.light => 'Light (sunrise)',
       ThemeMode.system => 'System',
     };
 
-    return SizedBox(
-      width: 170,
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<ThemeMode>(
-          value: widget.themeController.mode,
-          isExpanded: true,
-          dropdownColor: MobiusColors.panelOf(context),
-          borderRadius: BorderRadius.circular(8),
-          icon: Icon(
-            Icons.keyboard_arrow_down_rounded,
-            color: MobiusColors.textDimOf(context),
-          ),
-          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 14),
-          items: [
-            for (final mode in modes)
-              DropdownMenuItem<ThemeMode>(
-                value: mode,
-                child: Text(label(mode)),
-              ),
-          ],
-          onChanged: (mode) {
-            if (mode != null) widget.themeController.setMode(mode);
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOutputModeDescription() {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12, left: 20, right: 20),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            Icons.info_outline_rounded,
-            size: 17,
-            color: MobiusColors.textDimOf(context),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              _outputModeDescriptionFor(_outputMode),
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(fontSize: 12, height: 1.4),
-            ),
-          ),
-        ],
-      ),
+    return SettingsDropdown<ThemeMode>(
+      value: widget.themeController.mode,
+      items: const [ThemeMode.dark, ThemeMode.light, ThemeMode.system],
+      labelFor: label,
+      onChanged: widget.themeController.setMode,
     );
   }
 
@@ -902,7 +475,7 @@ class _SettingsPageState extends State<SettingsPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Mobius',
+                  'Mobius Music',
                   style: TextStyle(
                     color: MobiusColors.textOf(context),
                     fontSize: 15,
@@ -921,7 +494,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           Text(
-            '1.0.0',
+            '1.1.0',
             style: TextStyle(
               color: MobiusColors.textDimOf(context),
               fontSize: 13,
@@ -936,7 +509,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
+      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
@@ -944,48 +517,27 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Settings',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontSize: 42,
-                  fontWeight: FontWeight.w600,
-                  color: MobiusColors.textOf(context),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Manage your library and audio output.',
-                style: Theme.of(context).textTheme.bodyMedium,
+              const SettingsPageHeader(
+                title: 'Settings',
+                subtitle: 'Manage your library and appearance.',
               ),
               const SizedBox(height: 32),
-              _sectionTitle('Library'),
+              const SettingsSectionTitle('Library'),
               const SizedBox(height: 16),
               _buildMusicFolders(),
               const SizedBox(height: 16),
               _buildScanRow(),
               const SizedBox(height: 40),
-              _sectionTitle('Audio'),
+              const SettingsSectionTitle('Appearance'),
               const SizedBox(height: 16),
-              _settingRow(
-                title: 'Output mode',
-                description:
-                    'Controls the maximum output sample rate used by Mobius.',
-                trailing: _outputModeSelector(),
-              ),
-              _buildOutputModeDescription(),
-              const SizedBox(height: 16),
-              _buildEqualizer(),
-              const SizedBox(height: 40),
-              _sectionTitle('Appearance'),
-              const SizedBox(height: 16),
-              _settingRow(
+              SettingsRow(
                 title: 'Theme',
                 description:
                     'Dark, warm sunrise light, or match the system setting.',
                 trailing: _themeSelector(),
               ),
               const SizedBox(height: 40),
-              _sectionTitle('About'),
+              const SettingsSectionTitle('About'),
               const SizedBox(height: 16),
               _aboutRow(),
             ],

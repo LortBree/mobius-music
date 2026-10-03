@@ -135,11 +135,17 @@ void main() {
   // Sign of the hue-drift bias depends on the theme: cool (toward cyan/blue)
   // in dark mode, warm (toward red/orange) in light mode, so a warm palette
   // never drifts into cool hues and vice versa.
-  float coolBias = uWarm > 0.5 ? -0.30 : 0.35;
-  vec3 cViolet  = hueShift(uViolet,  coolBias + 0.85 * sin(t / 19.0));
-  vec3 cMagenta = hueShift(uMagenta, coolBias + 0.95 * sin(t / 23.0 + 1.7));
-  vec3 cBlue    = hueShift(uBlue,    coolBias + 0.80 * sin(t / 29.0 + 3.1));
-  vec3 cCyan    = hueShift(uCyan,    coolBias + 0.70 * sin(t / 37.0 + 0.6));
+  // Light mode: a NEGATIVE rotation turns red toward magenta, which is what
+  // made the light theme drift pink -- a hue that is not in the warm palette.
+  // So the warm bias is small and positive (toward orange/gold) and the swing
+  // is narrowed to ~+/-15 degrees, keeping every field inside
+  // red-orange-gold. Dark mode keeps its wide violet->cyan journey.
+  float coolBias = uWarm > 0.5 ? 0.12 : 0.35;
+  float swing = uWarm > 0.5 ? 0.30 : 1.0;
+  vec3 cViolet  = hueShift(uViolet,  coolBias + swing * 0.85 * sin(t / 19.0));
+  vec3 cMagenta = hueShift(uMagenta, coolBias + swing * 0.95 * sin(t / 23.0 + 1.7));
+  vec3 cBlue    = hueShift(uBlue,    coolBias + swing * 0.80 * sin(t / 29.0 + 3.1));
+  vec3 cCyan    = hueShift(uCyan,    coolBias + swing * 0.70 * sin(t / 37.0 + 0.6));
 
   vec3 light =
       cViolet  * f1 +
@@ -156,7 +162,7 @@ void main() {
   vec2 sunPos = vec2(1.0 * aspect, 0.0);
   float sunDist = distance(pw, sunPos);
   float sun = exp(-sunDist * sunDist * 0.9) * (0.85 + 0.15 * sin(t / 28.0));
-  vec3 sunCol = hueShift(uBlue, coolBias + 0.5 * sin(t / 31.0 + 0.9));
+  vec3 sunCol = hueShift(uBlue, coolBias + swing * 0.5 * sin(t / 31.0 + 0.9));
   light += sunCol * sun * 0.10;
 
   // Smooth vertical mask: full at the top, ~0 by uFalloffBottom.
@@ -194,7 +200,7 @@ void main() {
   // Cool floor colour -- lean on the cyan/blue end of the palette, hue-drifting
   // with the same living shift so it stays coherent with the top field.
   vec3 floorCol = mix(uCyan, uBlue, 0.5);
-  floorCol = hueShift(floorCol, coolBias + 0.6 * sin(t / 34.0 + 2.2));
+  floorCol = hueShift(floorCol, coolBias + swing * 0.6 * sin(t / 34.0 + 2.2));
 
   float bottom = rise * (0.35 + 0.65 * rays * rayMask);
   vec3 bottomLight = floorCol * bottom * (0.16 * uIntensity);
@@ -203,7 +209,28 @@ void main() {
   light += bottomLight;
   // -------------------------------------------------------------------------
 
-  vec3 rgb = clamp(uBase + light, 0.0, 1.0);
+  // Dark theme: light is ADDED to a near-black base (a glow in the dark).
+  // Light theme (uWarm = 1): the same field must still read as LIGHT, but
+  // plain addition on a bright base clips to white (glare), and darkening it
+  // reads as a stain. So the glow carries COLOUR at nearly constant
+  // brightness: the field's hue is rescaled to the base's luminance plus a
+  // small lift, then mixed in by the field strength. The result is a warm,
+  // softly lit patch that is only a few percent brighter than the base.
+  // Dark mode is unchanged.
+  vec3 additive = uBase + light;
+  const vec3 lumaW = vec3(0.2126, 0.7152, 0.0722);
+  float peak = max(light.r, max(light.g, light.b));
+  vec3 hue = light / max(peak, 1e-4);
+  float baseLuma = dot(uBase, lumaW);
+  vec3 lit = hue * (baseLuma * 1.06 / max(dot(hue, lumaW), 1e-4));
+  // Match the dark theme's restraint: there the glow is a dim, only
+  // moderately saturated violet that fades out within the top ~40%. Here the
+  // hue is half-desaturated toward the base and the mix is capped at 0.3, so
+  // the field reads as a soft warm wash, not a coloured poster.
+  lit = mix(vec3(dot(lit, lumaW)), lit, 0.55);
+  float cover = clamp(peak * 1.1, 0.0, 0.3);
+  vec3 tinted = mix(uBase, lit, cover);
+  vec3 rgb = clamp(mix(additive, tinted, uWarm), 0.0, 1.0);
 
   // Opaque; alpha 1 => premultiplied == straight.
   fragColor = vec4(rgb, 1.0);

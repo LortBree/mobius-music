@@ -4,14 +4,36 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../core/ffi/offline_player.dart';
+import '../core/macos/macos_playback_activity.dart';
 import 'audio_output_policy.dart';
 
 class PlayerController {
-  PlayerController(this._player, {Future<void> Function()? yieldFrame})
-    : _yieldFrame = yieldFrame ?? _endOfFrame;
+  PlayerController(
+    this._player, {
+    Future<void> Function()? yieldFrame,
+    this.onVolumeChanged,
+    Future<void> Function()? beginPlaybackActivity,
+    Future<void> Function()? endPlaybackActivity,
+  })  : _yieldFrame = yieldFrame ?? _endOfFrame,
+        _beginPlaybackActivity =
+            beginPlaybackActivity ?? MacOSPlaybackActivity.start,
+        _endPlaybackActivity =
+            endPlaybackActivity ?? MacOSPlaybackActivity.stop;
 
   final OfflinePlayer _player;
   final Future<void> Function() _yieldFrame;
+
+  /// Called after every accepted volume change (used to persist it).
+  final void Function(double volume)? onVolumeChanged;
+
+  /// Host hooks that hold/release the macOS App-Nap + idle-sleep assertion so
+  /// background playback does not stall. Injectable for tests.
+  final Future<void> Function() _beginPlaybackActivity;
+  final Future<void> Function() _endPlaybackActivity;
+
+  /// Tracks whether the activity assertion is currently held, so we only call
+  /// the host when the playing/not-playing state actually flips.
+  bool _playbackActivityHeld = false;
 
   static Future<void> _endOfFrame() => SchedulerBinding.instance.endOfFrame;
 
@@ -26,7 +48,14 @@ class PlayerController {
   /// reads as "loading the next song" instead of a frozen app.
   ValueListenable<int?> get pendingTrackId => _pendingTrackId;
 
-  Future<void> _switchTrack(int? targetTrackId, void Function() action) async {
+  /// Runs [action] after announcing [targetTrackId]. When
+  /// [notifyUnlessFalse] is set and [action] returns `false` (nothing
+  /// changed), no command is signalled.
+  Future<void> _switchTrack(
+    int? targetTrackId,
+    Object? Function() action, {
+    bool notifyUnlessFalse = false,
+  }) async {
     var announced = false;
     if (targetTrackId != null &&
         targetTrackId > 0 &&
@@ -37,8 +66,8 @@ class PlayerController {
     }
 
     try {
-      action();
-      _commandIssued();
+      final result = action();
+      if (!(notifyUnlessFalse && result == false)) _commandIssued();
     } finally {
       if (announced) _pendingTrackId.value = null;
     }
@@ -85,7 +114,36 @@ class PlayerController {
   /// views can refresh immediately and poll slowly while nothing plays.
   Listenable get commands => _commandCount;
 
-  void _commandIssued() => _commandCount.value++;
+  void _commandIssued() {
+    _commandCount.value++;
+    _syncPlaybackActivity();
+  }
+
+  /// Holds the macOS activity assertion while the engine is actually playing
+  /// and releases it otherwise. Driven off the engine's own state (not the
+  /// specific command) so every play/pause/stop/next/auto-advance path is
+  /// covered. Only calls the host when the held/not-held state flips.
+  void _syncPlaybackActivity() {
+    final playing = _safeIsPlaying();
+    if (playing == _playbackActivityHeld) {
+      return;
+    }
+
+    _playbackActivityHeld = playing;
+    if (playing) {
+      unawaited(_beginPlaybackActivity());
+    } else {
+      unawaited(_endPlaybackActivity());
+    }
+  }
+
+  bool _safeIsPlaying() {
+    try {
+      return state == OfflinePlayerState.playing;
+    } catch (_) {
+      return false;
+    }
+  }
 
   final AudioOutputPolicy _audioOutputPolicy = const AudioOutputPolicy();
 
@@ -94,6 +152,20 @@ class PlayerController {
 
   AudioOutputMode _audioOutputMode = AudioOutputMode.auto;
   double _volume = 1.0;
+  final ValueNotifier<double> _volumeNotifier = ValueNotifier<double>(1.0);
+
+  /// The current output volume, 0.0–1.0, as a listenable so views can keep a
+  /// volume slider in sync with keyboard-driven changes without polling.
+  ValueListenable<double> get volumeListenable => _volumeNotifier;
+
+  /// Releases the volume notifier. Call when the controller is torn down.
+  void dispose() {
+    if (_playbackActivityHeld) {
+      _playbackActivityHeld = false;
+      unawaited(_endPlaybackActivity());
+    }
+    _volumeNotifier.dispose();
+  }
 
   void load(int trackId) {
     _player.loadTrack(trackId);
@@ -126,6 +198,8 @@ class PlayerController {
     final next = volume.clamp(0.0, 1.0);
     _player.setVolume(next);
     _volume = next;
+    _volumeNotifier.value = next;
+    onVolumeChanged?.call(next);
   }
 
   void setEqualizerGains(List<double> gainsDb) {
@@ -243,13 +317,20 @@ class PlayerController {
     return advanced;
   }
 
+  bool _autoAdvancing = false;
+
   /// Handles natural end-of-track progression.
   ///
   /// UI pages can call this from their existing display timers.
   /// Repeat/EOF policy remains centralized here rather than living
   /// separately in LibraryPage and NowPlayingPage.
-  void pollPlayback() {
-    if (state != OfflinePlayerState.playing) {
+  ///
+  /// When the track has really ended (position reached duration, which is
+  /// exactly the engine's own end-of-track test), the upcoming track is
+  /// announced through [pendingTrackId] before the blocking native advance,
+  /// the same way a user-initiated [next] is.
+  Future<void> pollPlayback() async {
+    if (_autoAdvancing || state != OfflinePlayerState.playing) {
       return;
     }
 
@@ -261,14 +342,29 @@ class PlayerController {
 
     final position = currentSeconds;
 
-    if (_sleepAtEndOfTrack && position >= duration - 0.15) {
+    if (position < duration - 0.15) {
+      return;
+    }
+
+    if (_sleepAtEndOfTrack) {
       cancelSleepTimer();
       pause();
       return;
     }
 
-    if (position >= duration - 0.15) {
-      advanceIfAtEnd();
+    if (position < duration) {
+      return;
+    }
+
+    _autoAdvancing = true;
+    try {
+      await _switchTrack(
+        _nextTarget(),
+        _player.advanceQueueIfAtEnd,
+        notifyUnlessFalse: true,
+      );
+    } finally {
+      _autoAdvancing = false;
     }
   }
 

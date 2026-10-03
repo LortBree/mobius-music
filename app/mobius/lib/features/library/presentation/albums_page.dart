@@ -7,6 +7,7 @@ import '../../../core/ffi/offline_player.dart';
 import '../data/user_collections.dart';
 import 'group_artwork.dart';
 import 'track_context_menu.dart';
+import 'track_list_row.dart';
 
 class AlbumsPage extends StatefulWidget {
   const AlbumsPage({
@@ -216,7 +217,7 @@ class _AlbumsPageState extends State<AlbumsPage> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
+      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -225,6 +226,9 @@ class _AlbumsPageState extends State<AlbumsPage> {
               style: TextStyle(
                 fontSize: 42,
                 fontWeight: FontWeight.w600,
+                // Match SettingsPageHeader's tight line box so every page
+                // title sits at the same height above the page padding.
+                height: 1.05,
                 color: MobiusColors.textOf(context),
               ),
             ),
@@ -338,7 +342,7 @@ class _ArtworkPlaceholder extends StatelessWidget {
   }
 }
 
-class _AlbumDetailPage extends StatelessWidget {
+class _AlbumDetailPage extends StatefulWidget {
   const _AlbumDetailPage({
     required this.album,
     required this.playerController,
@@ -359,17 +363,93 @@ class _AlbumDetailPage extends StatelessWidget {
   final ValueChanged<TrackMetadata> onGoToAlbum;
   final VoidCallback onBack;
 
-  void _playAlbum() {
-    if (album.trackIds.isEmpty) {
-      return;
-    }
+  @override
+  State<_AlbumDetailPage> createState() => _AlbumDetailPageState();
+}
 
-    playerController.setQueue(album.trackIds);
-    playerController.selectAndPlay(0);
+class _AlbumDetailPageState extends State<_AlbumDetailPage> {
+  late final List<TrackMetadata> _tracks = widget.album.trackIds
+      .map((id) {
+        try {
+          return widget.repository.getTrackMetadata(id);
+        } catch (_) {
+          return null;
+        }
+      })
+      .whereType<TrackMetadata>()
+      .toList();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.playerController.commands.addListener(_onPlayerCommand);
+  }
+
+  @override
+  void dispose() {
+    widget.playerController.commands.removeListener(_onPlayerCommand);
+    super.dispose();
+  }
+
+  void _onPlayerCommand() {
+    if (mounted) setState(() {});
+  }
+
+  /// The album artist, used to decide whether a per-track artist is worth
+  /// repeating under the title.
+  String get _albumArtist => widget.album.artist.trim();
+
+  /// Whether the album spans more than one disc (and we have disc numbers).
+  bool get _multiDisc {
+    final discs = <int>{};
+    for (final track in _tracks) {
+      if (track.hasDiscNumber) discs.add(track.discNumber);
+    }
+    return discs.length > 1;
+  }
+
+  int get _safeCurrentTrackId {
+    try {
+      return widget.playerController.currentTrackId;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  double? _currentDuration(bool isCurrent) {
+    if (!isCurrent) return null;
+    try {
+      return widget.playerController.durationSeconds;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _play(int index) {
+    try {
+      widget.playerController.setQueue(widget.album.trackIds);
+      widget.playerController.selectAndPlay(index);
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  void _playAlbum() => _play(0);
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
   @override
   Widget build(BuildContext context) {
+    final currentTrackId = _safeCurrentTrackId;
+    final showDiscHeaders = _multiDisc;
+    final albumArtistLower = _albumArtist.toLowerCase();
+    int? renderedDisc;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 36, 24),
       child: Column(
@@ -379,7 +459,7 @@ class _AlbumDetailPage extends StatelessWidget {
             children: [
               IconButton(
                 tooltip: 'Back to albums',
-                onPressed: onBack,
+                onPressed: widget.onBack,
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
               const SizedBox(width: 6),
@@ -408,8 +488,8 @@ class _AlbumDetailPage extends StatelessWidget {
                 clipBehavior: Clip.antiAlias,
                 // 220 logical px; 440 covers a 2x display.
                 child: GroupArtwork(
-                  repository: repository,
-                  source: album.artwork,
+                  repository: widget.repository,
+                  source: widget.album.artwork,
                   decodeSize: 440,
                   filterQuality: FilterQuality.high,
                   placeholder: const _ArtworkPlaceholder(),
@@ -423,7 +503,7 @@ class _AlbumDetailPage extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        album.title,
+                        widget.album.title,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -434,7 +514,9 @@ class _AlbumDetailPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        album.artist.isEmpty ? 'Unknown Artist' : album.artist,
+                        widget.album.artist.isEmpty
+                            ? 'Unknown Artist'
+                            : widget.album.artist,
                         style: TextStyle(
                           color: MobiusColors.textDimOf(context),
                           fontSize: 15,
@@ -442,7 +524,7 @@ class _AlbumDetailPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 18),
                       Text(
-                        '${album.trackIds.length} tracks',
+                        '${widget.album.trackIds.length} tracks',
                         style: TextStyle(
                           color: MobiusColors.textDimOf(context),
                           fontSize: 13,
@@ -464,77 +546,73 @@ class _AlbumDetailPage extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 36),
+          const SizedBox(height: 28),
           Expanded(
-            child: ListView.separated(
-              itemCount: album.trackIds.length,
-              separatorBuilder: (context, __) =>
-                  Divider(height: 1, color: MobiusColors.borderOf(context)),
+            child: ListView.builder(
+              itemCount: _tracks.length,
               itemBuilder: (context, index) {
-                final trackId = album.trackIds[index];
-                final metadata = _metadataForTrack(trackId);
+                final metadata = _tracks[index];
+                final trackId = metadata.trackId;
+                final isCurrent = trackId == currentTrackId;
 
-                return TrackContextMenu(
+                // The displayed number is the tag's track number when known,
+                // else the row ordinal; CUE/multi-disc order is the library
+                // order already captured in [_tracks].
+                final displayNumber = metadata.trackNumber > 0
+                    ? metadata.trackNumber
+                    : index + 1;
+
+                // Only show the per-track artist when it differs from the
+                // album artist (compilations, features).
+                final trackArtist = metadata.artist.trim();
+                final subtitle =
+                    trackArtist.isNotEmpty &&
+                        trackArtist.toLowerCase() != albumArtistLower
+                    ? trackArtist
+                    : null;
+
+                final row = TrackContextMenu(
+                  key: ValueKey('context-$trackId'),
                   track: metadata,
-                  collections: collections,
-                  playerController: playerController,
+                  collections: widget.collections,
+                  playerController: widget.playerController,
                   removeLabel: 'Remove from Library',
                   onRemove: () async {
-                    await collections.removeFromLibrary(trackId);
-                    onLibraryChanged();
+                    await widget.collections.removeFromLibrary(trackId);
+                    widget.onLibraryChanged();
                   },
-                  onChanged: onLibraryChanged,
+                  onChanged: widget.onLibraryChanged,
                   onGoToArtist: trackArtistName(metadata).isEmpty
                       ? null
-                      : () => onGoToArtist(trackArtistName(metadata)),
+                      : () => widget.onGoToArtist(trackArtistName(metadata)),
                   onGoToAlbum: metadata.album.trim().isEmpty
                       ? null
-                      : () => onGoToAlbum(metadata),
-                  child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: SizedBox(
-                    width: 34,
-                    child: Text(
-                      '${index + 1}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: MobiusColors.textDimOf(context),
-                        fontSize: 13,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                  ),
-                  title: Text(
-                    metadata.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: MobiusColors.textOf(context),
-                      fontSize: 14,
-                    ),
-                  ),
-                  subtitle: Text(
-                    metadata.artist,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: MobiusColors.textDimOf(context),
-                      fontSize: 12,
-                    ),
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'Play',
-                    onPressed: () {
-                      playerController.setQueue(album.trackIds);
-                      playerController.selectAndPlay(index);
-                    },
-                    icon: Icon(
-                      Icons.play_arrow_rounded,
-                      color: MobiusColors.accentLightOf(context),
-                    ),
-                  ),
+                      : () => widget.onGoToAlbum(metadata),
+                  child: TrackListRow(
+                    key: ValueKey(trackId),
+                    trackNumber: displayNumber,
+                    title: metadata.title,
+                    artistSubtitle: subtitle,
+                    isCurrent: isCurrent,
+                    duration: _currentDuration(isCurrent),
+                    onPlay: () => _play(index),
                   ),
                 );
+
+                if (showDiscHeaders &&
+                    metadata.hasDiscNumber &&
+                    metadata.discNumber != renderedDisc) {
+                  renderedDisc = metadata.discNumber;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      TrackListDiscHeader(discNumber: metadata.discNumber),
+                      row,
+                    ],
+                  );
+                }
+
+                return row;
               },
             ),
           ),
@@ -542,8 +620,5 @@ class _AlbumDetailPage extends StatelessWidget {
       ),
     );
   }
-
-  TrackMetadata _metadataForTrack(int trackId) {
-    return repository.getTrackMetadata(trackId);
-  }
 }
+

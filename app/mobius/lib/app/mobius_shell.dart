@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/ffi/offline_player.dart';
+import '../core/keyboard/text_input_focus.dart';
 import '../features/library/data/ffi_library_repository.dart';
 import '../features/library/presentation/library_page.dart';
 import '../features/library/presentation/albums_page.dart';
@@ -11,6 +12,7 @@ import '../features/library/presentation/artists_page.dart';
 import '../features/library/presentation/collections_pages.dart';
 import '../features/library/data/user_collections.dart';
 import '../features/settings/presentation/settings_page.dart';
+import '../features/sound/presentation/sound_page.dart';
 import '../playback/player_controller.dart';
 import 'widgets/animated_mobius_background.dart';
 import 'theme/mobius_theme.dart';
@@ -46,12 +48,14 @@ const List<_NavEntry> _kPrimaryNavEntries = [
   _NavEntry(Icons.album_outlined, 'Albums'),
   _NavEntry(Icons.person_outline_rounded, 'Artists'),
   _NavEntry(Icons.playlist_play_rounded, 'Playlists'),
+  _NavEntry(Icons.graphic_eq_rounded, 'Sound'),
 ];
 const _NavEntry _kSettingsNavEntry = _NavEntry(
   Icons.settings_outlined,
   'Settings',
 );
-const int _kSettingsPageIndex = 4;
+const int _kSoundPageIndex = 4;
+const int _kSettingsPageIndex = 5;
 
 /// A plain snapshot of everything the shell reads off [PlayerController].
 /// Exists purely so `_syncPlayer` and `_updatePlayer` can share one read
@@ -212,13 +216,29 @@ class _MobiusShellState extends State<MobiusShell> {
     }
   }
 
-  void _updatePlayer() {
+  Future<void> _updatePlayer() async {
     if (!mounted) {
       return;
     }
 
     try {
-      widget.playerController.pollPlayback();
+      try {
+        await widget.playerController.pollPlayback();
+      } catch (error) {
+        // The next track failed to open (unreadable file, revoked folder
+        // access, decode error). Retrying every tick would re-attempt the
+        // load forever while the finished track sits on screen, so stop
+        // and tell the user instead of failing silently.
+        try {
+          widget.playerController.stop();
+        } catch (_) {}
+        if (mounted) _showError(error);
+      }
+      // A track switch is in flight: the announced track is on screen and
+      // the engine still reports the old one, so don't revert to it.
+      if (!mounted || widget.playerController.pendingTrackId.value != null) {
+        return;
+      }
       final snapshot = _readSnapshot();
       final discreteStateChanged =
           snapshot.trackId != _currentTrackId ||
@@ -434,6 +454,9 @@ class _MobiusShellState extends State<MobiusShell> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    if (isEditingText()) {
+      return KeyEventResult.ignored;
+    }
 
     final keyboard = HardwareKeyboard.instance;
     final shift = keyboard.isShiftPressed;
@@ -480,9 +503,7 @@ class _MobiusShellState extends State<MobiusShell> {
 
   void _changeVolume(double delta) {
     try {
-      widget.playerController.setVolume(
-        widget.playerController.volume + delta,
-      );
+      widget.playerController.setVolume(widget.playerController.volume + delta);
     } catch (error) {
       _showError(error);
     }
@@ -592,9 +613,7 @@ class _MobiusShellState extends State<MobiusShell> {
         child: SizedBox(
           width: _MobiusMetrics.sidebarDividerWidth,
           height: double.infinity,
-          child: Center(
-            child: Container(width: 1, color: _colors.border),
-          ),
+          child: Center(child: Container(width: 1, color: _colors.border)),
         ),
       ),
     );
@@ -656,9 +675,7 @@ class _MobiusShellState extends State<MobiusShell> {
                 Icon(
                   entry.icon,
                   size: 24,
-                  color: selected
-                      ? _colors.accent
-                      : _colors.textSecondary,
+                  color: selected ? _colors.accent : _colors.textSecondary,
                 ),
                 if (!collapsed) ...[
                   const SizedBox(width: 18),
@@ -738,7 +755,10 @@ class _MobiusShellState extends State<MobiusShell> {
           collectionsVersion: _libraryVersion,
         );
 
-      case 4:
+      case _kSoundPageIndex:
+        return SoundPage(playerController: widget.playerController);
+
+      case _kSettingsPageIndex:
         return SettingsPage(
           playerController: widget.playerController,
           repository: widget.repository,

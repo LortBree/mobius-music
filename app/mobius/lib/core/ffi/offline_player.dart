@@ -129,11 +129,44 @@ class TrackTechnicalInfo {
     required this.sampleRate,
     required this.channels,
     required this.bitsPerSample,
+    this.format = '',
   });
 
   final int sampleRate;
   final int channels;
   final int bitsPerSample;
+
+  /// Container/codec label derived from the file extension ("FLAC", "WAV",
+  /// ...). Empty when the path is unavailable.
+  final String format;
+
+  static const _formatLabels = {
+    'flac': 'FLAC',
+    'wav': 'WAV',
+    'wave': 'WAV',
+    'aif': 'AIFF',
+    'aiff': 'AIFF',
+    'aifc': 'AIFF',
+    'm4a': 'M4A',
+    'alac': 'ALAC',
+    'mp3': 'MP3',
+    'ogg': 'OGG',
+    'oga': 'OGG',
+    'opus': 'OPUS',
+    'dsf': 'DSF',
+    'dff': 'DFF',
+    'ape': 'APE',
+    'wv': 'WavPack',
+  };
+
+  /// Maps a file path to a display label; unknown extensions are upper-cased.
+  static String formatFromPath(String path) {
+    final name = path.split(RegExp(r'[/\\]')).last;
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot == name.length - 1) return '';
+    final ext = name.substring(dot + 1).toLowerCase();
+    return _formatLabels[ext] ?? ext.toUpperCase();
+  }
 }
 
 class OfflinePlayer {
@@ -300,8 +333,7 @@ class OfflinePlayer {
         final ids = calloc<ffi.Int64>(capacity > 0 ? capacity : 1);
 
         try {
-          final result =
-              _bindings.trackIds(_handle, ids, capacity, outCount);
+          final result = _bindings.trackIds(_handle, ids, capacity, outCount);
 
           if (result == 7 && attempt == 0) {
             capacity = outCount.value;
@@ -505,11 +537,30 @@ class OfflinePlayer {
     }
   }
 
+  /// Path of the loaded track's audio file, or '' when nothing is loaded.
+  String get trackPath {
+    _ensureNotDisposed();
+    const capacity = 4096;
+    final buffer = calloc<ffi.Uint8>(capacity);
+    try {
+      final result = _bindings.trackPath(
+        _handle,
+        buffer.cast<Utf8>(),
+        capacity,
+      );
+      if (result != 0) return '';
+      return buffer.cast<Utf8>().toDartString();
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
   TrackTechnicalInfo get technicalInfo {
     return TrackTechnicalInfo(
       sampleRate: sampleRate,
       channels: channels,
       bitsPerSample: bitsPerSample,
+      format: TrackTechnicalInfo.formatFromPath(trackPath),
     );
   }
 

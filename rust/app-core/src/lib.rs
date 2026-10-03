@@ -18,22 +18,21 @@ pub use playback_queue::{PlaybackQueue, PlaybackQueueError, QueuePosition};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use offline_player_audio_core::{pcm_ring_buffer, PcmRingConfig};
+use offline_player_audio_core::{pcm_ring_buffer, PcmRingConfig, SharedEqualizerGains};
 
 use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 use offline_player_decoder::{
-    probe, stream_to_pcm_i32_controlled_at_rate_with_equalizer,
-    stream_to_pcm_i32_from_frame_at_rate_with_equalizer, AudioFormat, MediaInfo, SampleFormat,
-    StreamError, StreamStats,
+    probe, stream_to_pcm_i32_controlled_at_rate, stream_to_pcm_i32_from_frame_at_rate, AudioFormat,
+    MediaInfo, SampleFormat, StreamError, StreamStats,
 };
 
 #[cfg(target_os = "macos")]
@@ -134,6 +133,47 @@ struct Session {
     //
     position_base_frame: u64,
     output_sample_rate: u32,
+
+    //
+    // Output underrun count at the moment the decoder was first seen to have
+    // finished (u64::MAX until then). See `played_output_samples`.
+    //
+    underrun_at_decoder_end: AtomicU64,
+}
+
+#[cfg(target_os = "macos")]
+impl Session {
+    /// Output samples that actually carried audio for the playback clock.
+    ///
+    /// Silence the device plays because the decoder fell behind (a stall on
+    /// a slow disk, the first few milliseconds after start) is not playback:
+    /// counting it made the position run ahead of the audio and could even
+    /// reach end-of-track early. Silence after the decoder has finished is
+    /// the tail of the track draining out, and it must count, or the clock
+    /// never reaches the end and auto-advance never fires.
+    fn played_output_samples(&self) -> u64 {
+        let telemetry = self.output.telemetry();
+
+        let decoder_done = self
+            .decoder_thread
+            .as_ref()
+            .is_none_or(|handle| handle.is_finished());
+
+        let mut stalls = self.underrun_at_decoder_end.load(Ordering::Relaxed);
+        if decoder_done && stalls == u64::MAX {
+            stalls = telemetry.underrun_samples;
+            self.underrun_at_decoder_end
+                .store(stalls, Ordering::Relaxed);
+        }
+
+        if stalls == u64::MAX {
+            telemetry.consumed_samples
+        } else {
+            telemetry
+                .consumed_samples
+                .saturating_add(telemetry.underrun_samples.saturating_sub(stalls))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,14 +215,14 @@ pub struct PlaybackController {
     ring_capacity_samples: usize,
     output_mode: PlaybackOutputMode,
     volume: f32,
-    equalizer_gains: Arc<RwLock<[f32; 10]>>,
+    equalizer_gains: Arc<SharedEqualizerGains>,
 }
 
 #[cfg(not(target_os = "macos"))]
 pub struct PlaybackController {
     state: PlaybackState,
     volume: f32,
-    equalizer_gains: Arc<RwLock<[f32; 10]>>,
+    equalizer_gains: Arc<SharedEqualizerGains>,
 }
 
 #[cfg(target_os = "macos")]
@@ -196,7 +236,7 @@ impl PlaybackController {
             ring_capacity_samples: Self::DEFAULT_RING_CAPACITY_SAMPLES,
             output_mode: PlaybackOutputMode::Auto,
             volume: 1.0,
-            equalizer_gains: Arc::new(RwLock::new([0.0; 10])),
+            equalizer_gains: Arc::new(SharedEqualizerGains::default()),
         }
     }
 
@@ -209,7 +249,7 @@ impl PlaybackController {
             ring_capacity_samples,
             output_mode: PlaybackOutputMode::Auto,
             volume: 1.0,
-            equalizer_gains: Arc::new(RwLock::new([0.0; 10])),
+            equalizer_gains: Arc::new(SharedEqualizerGains::default()),
         }
     }
 
@@ -247,24 +287,12 @@ impl PlaybackController {
     }
 
     pub fn equalizer_gains(&self) -> [f32; 10] {
-        *self
-            .equalizer_gains
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
+        self.equalizer_gains.get()
     }
 
     pub fn set_equalizer_gains(&mut self, gains_db: [f32; 10]) {
-        let mut gains = self
-            .equalizer_gains
-            .write()
-            .unwrap_or_else(|error| error.into_inner());
-        *gains = gains_db.map(|gain| {
-            if gain.is_finite() {
-                gain.clamp(-12.0, 12.0)
-            } else {
-                0.0
-            }
-        });
+        // Lock-free: the output callback picks it up within one I/O buffer.
+        self.equalizer_gains.set(gains_db);
     }
 
     pub fn loaded_path(&self) -> Option<&Path> {
@@ -296,9 +324,7 @@ impl PlaybackController {
             return Some(session.position_base_frame);
         }
 
-        let telemetry = session.output.telemetry();
-
-        let progressed_output_frames = telemetry.requested_samples / channels;
+        let progressed_output_frames = session.played_output_samples() / channels;
 
         let progressed_source_frames = if session.output_sample_rate == 0 {
             0
@@ -373,12 +399,13 @@ impl PlaybackController {
 
         let (mut producer, consumer) = pcm_ring_buffer(ring_config);
 
-        let output = PcmOutput::open(
+        let output = PcmOutput::open_with_equalizer(
             device_id,
             consumer,
             output_sample_rate,
             source_channels,
             source_bits,
+            Some(Arc::clone(&self.equalizer_gains)),
         )?;
         output.set_volume(self.volume);
 
@@ -394,18 +421,16 @@ impl PlaybackController {
         let worker_paused = Arc::clone(&paused);
 
         let worker_path = path.clone();
-        let worker_equalizer_gains = Arc::clone(&self.equalizer_gains);
 
         let decoder_thread = thread::Builder::new()
             .name("offline-player-decoder".to_string())
             .spawn(move || {
-                let result = stream_to_pcm_i32_controlled_at_rate_with_equalizer(
+                let result = stream_to_pcm_i32_controlled_at_rate(
                     &worker_path,
                     &mut producer,
                     &worker_cancel,
                     &worker_paused,
                     Some(output_sample_rate),
-                    worker_equalizer_gains,
                 );
 
                 DecoderWorkerResult { result }
@@ -421,6 +446,7 @@ impl PlaybackController {
             output,
             running: false,
             position_base_frame: 0,
+            underrun_at_decoder_end: AtomicU64::new(u64::MAX),
             output_sample_rate,
         });
 
@@ -538,10 +564,27 @@ impl PlaybackController {
         let media_info = session.media_info.clone();
 
         //
-        // The immutable borrow ends naturally before the teardown.
+        // Any failure from here on has already torn down (part of) the old
+        // session. Leaving it installed would wedge the player: a session
+        // whose decoder is gone and whose output is stopped, so every later
+        // play/seek acts on a dead stream. Drop to a clean Stopped state
+        // instead, from which the next load works normally.
         //
-        // drop(session);
+        let result = self.reopen_at_frame(path, media_info, target_frame, was_playing, was_paused);
+        if result.is_err() {
+            let _ = self.stop_internal();
+        }
+        result
+    }
 
+    fn reopen_at_frame(
+        &mut self,
+        path: PathBuf,
+        media_info: MediaInfo,
+        target_frame: u64,
+        was_playing: bool,
+        was_paused: bool,
+    ) -> Result<(), PlaybackError> {
         self.stop_output_and_decoder()?;
 
         let device_id = default_output_device()?;
@@ -571,12 +614,13 @@ impl PlaybackController {
 
         let (mut producer, consumer) = pcm_ring_buffer(ring_config);
 
-        let output = PcmOutput::open(
+        let output = PcmOutput::open_with_equalizer(
             device_id,
             consumer,
             output_sample_rate,
             source_channels,
             source_bits,
+            Some(Arc::clone(&self.equalizer_gains)),
         )?;
         output.set_volume(self.volume);
 
@@ -593,19 +637,17 @@ impl PlaybackController {
         let worker_paused = Arc::clone(&paused);
 
         let worker_path = path.clone();
-        let worker_equalizer_gains = Arc::clone(&self.equalizer_gains);
 
         let decoder_thread = thread::Builder::new()
             .name("offline-player-decoder".to_string())
             .spawn(move || {
-                let result = stream_to_pcm_i32_from_frame_at_rate_with_equalizer(
+                let result = stream_to_pcm_i32_from_frame_at_rate(
                     &worker_path,
                     target_frame,
                     &mut producer,
                     &worker_cancel,
                     &worker_paused,
                     Some(output_sample_rate),
-                    worker_equalizer_gains,
                 )
                 .map(|(_actual_start_frame, stats)| stats);
 
@@ -622,6 +664,7 @@ impl PlaybackController {
             output,
             running: false,
             position_base_frame: target_frame,
+            underrun_at_decoder_end: AtomicU64::new(u64::MAX),
             output_sample_rate,
         });
 
@@ -746,7 +789,7 @@ impl PlaybackController {
         Self {
             state: PlaybackState::Idle,
             volume: 1.0,
-            equalizer_gains: Arc::new(RwLock::new([0.0; 10])),
+            equalizer_gains: Arc::new(SharedEqualizerGains::default()),
         }
     }
 
@@ -773,24 +816,12 @@ impl PlaybackController {
     }
 
     pub fn equalizer_gains(&self) -> [f32; 10] {
-        *self
-            .equalizer_gains
-            .read()
-            .unwrap_or_else(|error| error.into_inner())
+        self.equalizer_gains.get()
     }
 
     pub fn set_equalizer_gains(&mut self, gains_db: [f32; 10]) {
-        let mut gains = self
-            .equalizer_gains
-            .write()
-            .unwrap_or_else(|error| error.into_inner());
-        *gains = gains_db.map(|gain| {
-            if gain.is_finite() {
-                gain.clamp(-12.0, 12.0)
-            } else {
-                0.0
-            }
-        });
+        // Lock-free: the output callback picks it up within one I/O buffer.
+        self.equalizer_gains.set(gains_db);
     }
 }
 

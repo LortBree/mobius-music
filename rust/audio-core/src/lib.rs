@@ -4,7 +4,10 @@ pub mod equalizer;
 pub mod output_policy;
 pub mod resampler;
 
-pub use equalizer::{EqualizerSettings, GraphicEqualizer, EQUALIZER_BANDS_HZ};
+pub use equalizer::{
+    auto_preamp_db, EqualizerSettings, GraphicEqualizer, RealtimeEqualizer, SharedEqualizerGains,
+    EQUALIZER_BANDS_HZ,
+};
 pub use output_policy::{OutputPlan, OutputPolicy, OutputPolicyError};
 pub use resampler::{LinearResampler, ResamplerError};
 

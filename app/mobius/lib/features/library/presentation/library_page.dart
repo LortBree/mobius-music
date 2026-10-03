@@ -278,7 +278,7 @@ class _LibraryPageState extends State<LibraryPage> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
+      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -287,6 +287,9 @@ class _LibraryPageState extends State<LibraryPage> {
             style: TextStyle(
               fontSize: 42,
               fontWeight: FontWeight.w600,
+              // Match SettingsPageHeader's tight line box so every page title
+              // sits at the same height above the page padding.
+              height: 1.05,
               color: MobiusColors.textOf(context),
             ),
           ),

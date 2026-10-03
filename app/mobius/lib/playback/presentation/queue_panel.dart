@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 
+import '../../core/cache/lru_cache.dart';
 import '../../core/ffi/offline_player.dart';
 import '../../app/theme/colors.dart';
 import '../../features/library/data/ffi_library_repository.dart';
@@ -41,7 +42,7 @@ class _QueuePanelState extends State<QueuePanel> {
   );
   List<int> _queueIds = const [];
   List<TrackMetadata> _queueTracks = const [];
-  final Map<int, ImageProvider> _artworkCache = {};
+  final LruCache<int, ImageProvider?> _artworkCache = LruCache(64);
   int _currentIndex = -1;
   int _upNextCount = 0;
 
@@ -128,21 +129,20 @@ class _QueuePanelState extends State<QueuePanel> {
   }
 
   ImageProvider? _artworkFor(int trackId) {
-    final cached = _artworkCache[trackId];
-    if (cached != null) return cached;
+    // Tracks without art are cached as null too, so a row without a cover
+    // does not re-read the database on every rebuild.
+    if (_artworkCache.containsKey(trackId)) return _artworkCache.get(trackId);
+    ImageProvider? image;
     try {
       final artwork = widget.repository.getTrackArtwork(trackId);
-      if (artwork == null || artwork.isEmpty) return null;
-      final image = ResizeImage(
-        MemoryImage(artwork.data),
-        width: 88,
-        height: 88,
-      );
-      _artworkCache[trackId] = image;
-      return image;
+      if (artwork != null && !artwork.isEmpty) {
+        image = ResizeImage(MemoryImage(artwork.data), width: 88, height: 88);
+      }
     } catch (_) {
       return null;
     }
+    _artworkCache.put(trackId, image);
+    return image;
   }
 
   Future<void> _selectTrack(int index) async {

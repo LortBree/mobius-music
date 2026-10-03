@@ -579,6 +579,11 @@ class OfflinePlayerBindings {
           'offline_player_track_bits_per_sample',
         );
 
+    // Same (handle, buffer, capacity) string-out shape as last_error.
+    trackPath = library.lookupFunction<LastErrorNative, LastErrorDart>(
+      'offline_player_track_path',
+    );
+
     loadTrack = library.lookupFunction<LoadTrackNative, LoadTrackDart>(
       'offline_player_load_track',
     );
@@ -763,6 +768,7 @@ class OfflinePlayerBindings {
   late final TrackSampleRateDart trackSampleRate;
   late final TrackChannelsDart trackChannels;
   late final TrackBitsPerSampleDart trackBitsPerSample;
+  late final LastErrorDart trackPath;
 
   late final LoadTrackDart loadTrack;
   late final PlayDart play;

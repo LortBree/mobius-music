@@ -18,39 +18,48 @@ abstract final class MobiusTheme {
   static const _darkTextDim = Color(0xFF9A9A9A);
   static const _darkAccent = Color(0xFF8A63D2);
 
-  // ---- Light palette (warm sunrise) --------------------------------------
-  // Cream/sand rather than stark white -- keeps warm glow vivid and text
-  // contrast comfortable.
-  static const _lightBackground = Color(0xFFF6EFE6); // warm cream
-  static const _lightHeader = Color(0xFFF1E7D8); // sand
-  static const _lightSurface = Color(0xFFFBF5EC);
-  static const _lightElevated = Color(0xFFEADFCB);
-  static const _lightBorder = Color(0xFFE0D3BE);
-  static const _lightText = Color(0xFF2A2018); // warm near-black
-  static const _lightTextDim = Color(0xFF7A6A55);
-  static const _lightAccent = Color(0xFFE0602A); // warm orange
+  // ---- Light palette (dim stone) -----------------------------------------
+  // A dimmed, near-neutral stone instead of sand/cream: relative luminance
+  // 0.58 (was 0.78), so the window no longer glows. Being near-neutral, it
+  // also lets the warm ambient palette show by hue instead of disappearing
+  // into a same-coloured base. Contrast vs background: text 9.5:1,
+  // textDim 5.2:1, accent 3.8:1 (UI/large).
+  // Elevation mirrors the dark theme exactly: every raised surface is a step
+  // LIGHTER than the background (dark: 121212 -> 1A1A1A -> 2A2A2A), and the
+  // header / mini player / selection carry a faint accent tint the way the
+  // dark ones carry violet. Only borders go darker, so they stay visible.
+  static const _lightBackground = Color(0xFFCEC8BE); // dim stone
+  static const _lightHeader = Color(0xFFD4CCC0); // lifted, faint warm tint
+  static const _lightSurface = Color(0xFFD5D0C7); // card, slightly lifted
+  static const _lightElevated = Color(0xFFDED9D0);
+  static const _lightBorder = Color(0xFFBDB6AA);
+  static const _lightMiniPlayer = Color(0xFFD8CEC0); // like dark 1D1B24
+  static const _lightSelection = Color(0xFFE0D4C2); // like dark 292631
+  static const _lightText = Color(0xFF2A2117); // warm ink, not black
+  static const _lightTextDim = Color(0xFF574A3A);
+  static const _lightAccent = Color(0xFF9E441A); // deep burnt orange
 
   static ThemeData dark() => _build(
-        brightness: Brightness.dark,
-        background: _darkBackground,
-        surface: _darkSurface,
-        elevated: _darkElevated,
-        border: _darkBorder,
-        primary: _darkAccent,
-        text: _darkText,
-        secondaryText: _darkTextDim,
-      );
+    brightness: Brightness.dark,
+    background: _darkBackground,
+    surface: _darkSurface,
+    elevated: _darkElevated,
+    border: _darkBorder,
+    primary: _darkAccent,
+    text: _darkText,
+    secondaryText: _darkTextDim,
+  );
 
   static ThemeData light() => _build(
-        brightness: Brightness.light,
-        background: _lightBackground,
-        surface: _lightSurface,
-        elevated: _lightElevated,
-        border: _lightBorder,
-        primary: _lightAccent,
-        text: _lightText,
-        secondaryText: _lightTextDim,
-      );
+    brightness: Brightness.light,
+    background: _lightBackground,
+    surface: _lightSurface,
+    elevated: _lightElevated,
+    border: _lightBorder,
+    primary: _lightAccent,
+    text: _lightText,
+    secondaryText: _lightTextDim,
+  );
 
   static ThemeData _build({
     required Brightness brightness,
@@ -66,7 +75,7 @@ abstract final class MobiusTheme {
     final colorScheme = ColorScheme(
       brightness: brightness,
       primary: primary,
-      onPrimary: isDark ? const Color(0xFFFAFAFA) : const Color(0xFFFFF6EE),
+      onPrimary: isDark ? const Color(0xFFFAFAFA) : const Color(0xFFFFF4EA),
       secondary: primary,
       onSecondary: text,
       surface: surface,
@@ -105,32 +114,35 @@ abstract final class MobiusTheme {
           textPrimary: text,
           textSecondary: secondaryText,
           accent: primary,
-          accentLight:
-              isDark ? const Color(0xFFC4A8F0) : const Color(0xFFF2A05A),
+          accentLight: isDark
+              ? const Color(0xFFC4A8F0)
+              : const Color(0xFFB8622E),
           onAccent: colorScheme.onPrimary,
-          miniPlayer: isDark ? const Color(0xFF1D1B24) : _lightHeader,
-          selection: isDark
-              ? const Color(0xFF292631)
-              : const Color(0xFFEADFCB),
-          scrim: isDark ? const Color(0xFF2A2A2A) : const Color(0xFF2A2018),
-          onScrim: const Color(0xFFFAFAFA),
+          miniPlayer: isDark ? const Color(0xFF1D1B24) : _lightMiniPlayer,
+          selection: isDark ? const Color(0xFF292631) : _lightSelection,
+          scrim: isDark ? const Color(0xFF2A2A2A) : _lightText,
+          onScrim: isDark ? const Color(0xFFFAFAFA) : const Color(0xFFFAF4EA),
         ),
       ],
     );
   }
 
   /// The ambient background palette for a given brightness. Dark = the cool
-  /// violet/cyan field; light = a warm orange/red/yellow "sunrise" field on a
-  /// soft cream base.
+  /// violet/cyan field; light = the user's warm orange/red/yellow palette laid
+  /// over a muted sand base as tint (see the uWarm branch in ambient_glow.frag),
+  /// so it deepens the paper instead of brightening it.
   static AmbientConfig ambientFor(Brightness brightness) {
     if (brightness == Brightness.light) {
       return const AmbientConfig(
-        base: Color(0xFFF3EADC), // warm cream, matches the light background
+        // Same neutral stone as the scaffold, so the warm stain reads by hue
+        // contrast. The palette is the user's own; the shader multiplies it in
+        // (light can only darken), so no pre-deepening is needed.
+        base: _lightBackground,
         violet: Color(0xFFE8873A), // primary: warm orange
         magenta: Color(0xFFD9503B), // secondary: soft red
-        blue: Color(0xFFF0B23C), // "upper right": golden yellow
-        cyan: Color(0xFFF6D26B), // subtle warm accent (was cool)
-        intensity: 0.42, // gentler on a light base so text stays readable
+        blue: Color(0xFFF0B23C), // "upper right": golden
+        cyan: Color(0xFFF6D26B), // warm accent
+        intensity: 0.6, // stain strength over the stone base
         falloffTop: 0.02,
         falloffBottom: 0.72,
         warmMode: true,

@@ -38,6 +38,26 @@ class _FakePlayer implements OfflinePlayer {
   @override
   void repeatCurrentQueueTrackAndPlay() => _move('repeat', index);
 
+  // End-of-track surface for pollPlayback.
+  OfflinePlayerState playState = OfflinePlayerState.playing;
+  double position = 0;
+  double duration = 100;
+  @override
+  OfflinePlayerState get state => playState;
+  @override
+  double get currentSeconds => position;
+  @override
+  double get durationSeconds => duration;
+  @override
+  bool advanceQueueIfAtEnd() {
+    if (position < duration || index + 1 >= ids.length) {
+      log.add('native:advance-noop');
+      return false;
+    }
+    _move('advance', index + 1);
+    return true;
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -106,5 +126,44 @@ void main() {
     await expectLater(controller.next(), throwsStateError);
     expect(controller.pendingTrackId.value, isNull);
     expect(log, isNot(contains('command')));
+  });
+
+  group('natural end of track', () {
+    test('announces the next track before the blocking advance', () async {
+      player.position = 100;
+      await controller.pollPlayback();
+      expect(log, [
+        'pending:20',
+        'frame',
+        'native:advance',
+        'command',
+        'pending:null',
+      ]);
+    });
+
+    test('does nothing before the track has ended', () async {
+      player.position = 99.95;
+      await controller.pollPlayback();
+      expect(log, isEmpty);
+    });
+
+    test('last track with repeat off: no announcement, no command', () async {
+      player
+        ..index = 2
+        ..position = 100;
+      await controller.pollPlayback();
+      expect(log, ['native:advance-noop']);
+    });
+
+    test(
+      'a second poll during the frame wait does not advance twice',
+      () async {
+        player.position = 100;
+        final first = controller.pollPlayback();
+        await controller.pollPlayback();
+        await first;
+        expect(log.where((e) => e == 'native:advance'), hasLength(1));
+      },
+    );
   });
 }

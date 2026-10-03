@@ -7,6 +7,7 @@ import '../../../core/ffi/offline_player.dart';
 import '../data/user_collections.dart';
 import 'group_artwork.dart';
 import 'track_context_menu.dart';
+import 'track_list_row.dart';
 
 class ArtistsPage extends StatefulWidget {
   const ArtistsPage({
@@ -210,7 +211,7 @@ class _ArtistsPageState extends State<ArtistsPage> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 28, 36, 24),
+      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
@@ -219,6 +220,9 @@ class _ArtistsPageState extends State<ArtistsPage> {
               style: TextStyle(
                 fontSize: 42,
                 fontWeight: FontWeight.w600,
+                // Match SettingsPageHeader's tight line box so every page
+                // title sits at the same height above the page padding.
+                height: 1.05,
                 color: MobiusColors.textOf(context),
               ),
             ),
@@ -326,7 +330,18 @@ class _ArtistPlaceholder extends StatelessWidget {
   }
 }
 
-class _ArtistDetailPage extends StatelessWidget {
+class _ArtistAlbumGroup {
+  _ArtistAlbumGroup({required this.title, required this.year})
+    : artwork = GroupArtworkSource(<int>[]);
+
+  final String title;
+  final String year;
+  final List<TrackMetadata> tracks = [];
+  final List<int> trackIds = [];
+  final GroupArtworkSource artwork;
+}
+
+class _ArtistDetailPage extends StatefulWidget {
   const _ArtistDetailPage({
     required this.artist,
     required this.repository,
@@ -347,17 +362,117 @@ class _ArtistDetailPage extends StatelessWidget {
   final ValueChanged<TrackMetadata> onGoToAlbum;
   final VoidCallback onBack;
 
-  void _playArtist() {
-    if (artist.trackIds.isEmpty) {
-      return;
-    }
+  @override
+  State<_ArtistDetailPage> createState() => _ArtistDetailPageState();
+}
 
-    playerController.setQueue(artist.trackIds);
-    playerController.selectAndPlay(0);
+class _ArtistDetailPageState extends State<_ArtistDetailPage> {
+  /// Flat, library-ordered track list (also the play queue order).
+  late final List<TrackMetadata> _tracks = widget.artist.trackIds
+      .map((id) {
+        try {
+          return widget.repository.getTrackMetadata(id);
+        } catch (_) {
+          return null;
+        }
+      })
+      .whereType<TrackMetadata>()
+      .toList();
+
+  /// Tracks grouped by album, preserving first-seen (library) order. Each
+  /// track's index into [_tracks] is remembered so playing a row sets the
+  /// right queue index.
+  late final List<_ArtistAlbumGroup> _groups = _buildGroups();
+
+  /// trackId -> its index in [_tracks], for the play action.
+  late final Map<int, int> _indexOf = {
+    for (var i = 0; i < _tracks.length; i++) _tracks[i].trackId: i,
+  };
+
+  List<_ArtistAlbumGroup> _buildGroups() {
+    final byAlbum = <String, _ArtistAlbumGroup>{};
+    final order = <String>[];
+    for (final track in _tracks) {
+      final album = track.album.trim();
+      final key = album.toLowerCase();
+      final group = byAlbum.putIfAbsent(key, () {
+        order.add(key);
+        return _ArtistAlbumGroup(
+          title: album.isEmpty ? 'Unknown album' : album,
+          year: _yearFrom(track.date),
+        );
+      });
+      group.tracks.add(track);
+      group.trackIds.add(track.trackId);
+    }
+    for (final group in byAlbum.values) {
+      group.artwork.trackIds.addAll(group.trackIds);
+    }
+    return [for (final key in order) byAlbum[key]!];
+  }
+
+  /// Pulls a 4-digit year out of a free-form date string (e.g. "1997",
+  /// "1997-08-21"); empty when none is present.
+  static String _yearFrom(String date) {
+    final match = RegExp(r'\d{4}').firstMatch(date);
+    return match?.group(0) ?? '';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    widget.playerController.commands.addListener(_onPlayerCommand);
+  }
+
+  @override
+  void dispose() {
+    widget.playerController.commands.removeListener(_onPlayerCommand);
+    super.dispose();
+  }
+
+  void _onPlayerCommand() {
+    if (mounted) setState(() {});
+  }
+
+  int get _safeCurrentTrackId {
+    try {
+      return widget.playerController.currentTrackId;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  double? _currentDuration(bool isCurrent) {
+    if (!isCurrent) return null;
+    try {
+      return widget.playerController.durationSeconds;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _play(int index) {
+    try {
+      widget.playerController.setQueue(widget.artist.trackIds);
+      widget.playerController.selectAndPlay(index);
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  void _playArtist() => _play(0);
+
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
   @override
   Widget build(BuildContext context) {
+    final currentTrackId = _safeCurrentTrackId;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 24, 36, 24),
       child: Column(
@@ -367,7 +482,7 @@ class _ArtistDetailPage extends StatelessWidget {
             children: [
               IconButton(
                 tooltip: 'Back to artists',
-                onPressed: onBack,
+                onPressed: widget.onBack,
                 icon: const Icon(Icons.arrow_back_rounded),
               ),
               const SizedBox(width: 6),
@@ -396,8 +511,8 @@ class _ArtistDetailPage extends StatelessWidget {
                 clipBehavior: Clip.antiAlias,
                 // 220 logical px; 440 covers a 2x display.
                 child: GroupArtwork(
-                  repository: repository,
-                  source: artist.artwork,
+                  repository: widget.repository,
+                  source: widget.artist.artwork,
                   decodeSize: 440,
                   filterQuality: FilterQuality.high,
                   placeholder: const _ArtistPlaceholder(),
@@ -411,7 +526,7 @@ class _ArtistDetailPage extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        artist.name,
+                        widget.artist.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -422,7 +537,7 @@ class _ArtistDetailPage extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        '${artist.trackIds.length} tracks',
+                        '${widget.artist.trackIds.length} tracks',
                         style: TextStyle(
                           color: MobiusColors.textDimOf(context),
                           fontSize: 13,
@@ -444,78 +559,138 @@ class _ArtistDetailPage extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 36),
+          const SizedBox(height: 28),
           Expanded(
-            child: ListView.separated(
-              itemCount: artist.trackIds.length,
-              separatorBuilder: (context, __) =>
-                  Divider(height: 1, color: MobiusColors.borderOf(context)),
-              itemBuilder: (context, index) {
-                final trackId = artist.trackIds[index];
-                final metadata = repository.getTrackMetadata(trackId);
+            child: ListView.builder(
+              itemCount: _groups.length,
+              itemBuilder: (context, groupIndex) {
+                final group = _groups[groupIndex];
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (groupIndex > 0) const SizedBox(height: 20),
+                    _ArtistAlbumHeader(
+                      group: group,
+                      repository: widget.repository,
+                    ),
+                    const SizedBox(height: 6),
+                    for (var i = 0; i < group.tracks.length; i++)
+                      _buildRow(context, group, i, currentTrackId),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-                return TrackContextMenu(
-                  track: metadata,
-                  collections: collections,
-                  playerController: playerController,
-                  removeLabel: 'Remove from Library',
-                  onRemove: () async {
-                    await collections.removeFromLibrary(trackId);
-                    onLibraryChanged();
-                  },
-                  onChanged: onLibraryChanged,
-                  onGoToArtist: trackArtistName(metadata).isEmpty
-                      ? null
-                      : () => onGoToArtist(trackArtistName(metadata)),
-                  onGoToAlbum: metadata.album.trim().isEmpty
-                      ? null
-                      : () => onGoToAlbum(metadata),
-                  child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: SizedBox(
-                    width: 34,
-                    child: Text(
-                      '${index + 1}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: MobiusColors.textDimOf(context),
-                        fontSize: 13,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
+  Widget _buildRow(
+    BuildContext context,
+    _ArtistAlbumGroup group,
+    int indexInGroup,
+    int currentTrackId,
+  ) {
+    final metadata = group.tracks[indexInGroup];
+    final trackId = metadata.trackId;
+    final isCurrent = trackId == currentTrackId;
+    final queueIndex = _indexOf[trackId] ?? 0;
+    final displayNumber = metadata.trackNumber > 0
+        ? metadata.trackNumber
+        : indexInGroup + 1;
+
+    return TrackContextMenu(
+      key: ValueKey('context-$trackId'),
+      track: metadata,
+      collections: widget.collections,
+      playerController: widget.playerController,
+      removeLabel: 'Remove from Library',
+      onRemove: () async {
+        await widget.collections.removeFromLibrary(trackId);
+        widget.onLibraryChanged();
+      },
+      onChanged: widget.onLibraryChanged,
+      onGoToArtist: trackArtistName(metadata).isEmpty
+          ? null
+          : () => widget.onGoToArtist(trackArtistName(metadata)),
+      onGoToAlbum: metadata.album.trim().isEmpty
+          ? null
+          : () => widget.onGoToAlbum(metadata),
+      child: TrackListRow(
+        key: ValueKey(trackId),
+        trackNumber: displayNumber,
+        title: metadata.title,
+        isCurrent: isCurrent,
+        duration: _currentDuration(isCurrent),
+        onPlay: () => _play(queueIndex),
+      ),
+    );
+  }
+}
+
+/// Album group header on the artist page: a small cover, the album title and
+/// its year when known.
+class _ArtistAlbumHeader extends StatelessWidget {
+  const _ArtistAlbumHeader({required this.group, required this.repository});
+
+  final _ArtistAlbumGroup group;
+  final FfiLibraryRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: ColoredBox(
+                color: MobiusColors.panelOf(context),
+                child: GroupArtwork(
+                  repository: repository,
+                  source: group.artwork,
+                  decodeSize: 88,
+                  filterQuality: FilterQuality.medium,
+                  placeholder: Icon(
+                    Icons.album_outlined,
+                    size: 22,
+                    color: MobiusColors.textDimOf(context),
                   ),
-                  title: Text(
-                    metadata.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: MobiusColors.textOf(context),
-                      fontSize: 14,
-                    ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  group.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: MobiusColors.textOf(context),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
                   ),
-                  subtitle: Text(
-                    metadata.album.isEmpty ? metadata.artist : metadata.album,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                ),
+                if (group.year.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    group.year,
                     style: TextStyle(
                       color: MobiusColors.textDimOf(context),
                       fontSize: 12,
                     ),
                   ),
-                  trailing: IconButton(
-                    tooltip: 'Play',
-                    onPressed: () {
-                      playerController.setQueue(artist.trackIds);
-                      playerController.selectAndPlay(index);
-                    },
-                    icon: Icon(
-                      Icons.play_arrow_rounded,
-                      color: MobiusColors.accentLightOf(context),
-                    ),
-                  ),
-                  ),
-                );
-              },
+                ],
+              ],
             ),
           ),
         ],

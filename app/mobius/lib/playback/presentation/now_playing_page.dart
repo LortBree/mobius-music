@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/ffi/offline_player.dart';
+import '../../../core/keyboard/text_input_focus.dart';
 import '../../../playback/audio_output_policy.dart';
 import '../../../playback/player_controller.dart';
 import '../../app/theme/colors.dart';
@@ -109,7 +110,9 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   }
 
   void _tick() {
-    if (!mounted || _isSeeking) {
+    if (!mounted ||
+        _isSeeking ||
+        widget.playerController.pendingTrackId.value != null) {
       return;
     }
 
@@ -395,6 +398,9 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
+    if (isEditingText()) {
+      return KeyEventResult.ignored;
+    }
     final keyboard = HardwareKeyboard.instance;
     if (keyboard.isControlPressed ||
         keyboard.isMetaPressed ||
@@ -416,11 +422,11 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       return KeyEventResult.handled;
     }
     if (!shift && key == LogicalKeyboardKey.arrowLeft) {
-      _onSeekEnd(_position - 5);
+      _onSeekEnd(_enginePosition() - 5);
       return KeyEventResult.handled;
     }
     if (!shift && key == LogicalKeyboardKey.arrowRight) {
-      _onSeekEnd(_position + 5);
+      _onSeekEnd(_enginePosition() + 5);
       return KeyEventResult.handled;
     }
     if (!shift && key == LogicalKeyboardKey.arrowUp) {
@@ -432,6 +438,15 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  /// Where audio really is -- not the seek bar's drag preview.
+  double _enginePosition() {
+    try {
+      return widget.playerController.currentSeconds;
+    } catch (_) {
+      return _position;
+    }
   }
 
   void _adjustVolume(double delta) {
@@ -963,31 +978,40 @@ class _TechnicalInfo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The sample rate lives on the SOURCE/OUTPUT line below, so this line
+    // carries the file format instead of repeating it.
+    final style = TextStyle(
+      color: MobiusColors.textOf(context),
+      fontSize: 13,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    );
+    final parts = [
+      if (technicalInfo.format.isNotEmpty) technicalInfo.format,
+      '${technicalInfo.bitsPerSample}-bit',
+      formatChannels(technicalInfo.channels),
+    ];
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          formatSampleRate(technicalInfo.sampleRate),
-          style: TextStyle(
-            color: MobiusColors.textOf(context),
-            fontSize: 13,
-            fontFeatures: const [FontFeature.tabularFigures()],
+        for (var i = 0; i < parts.length; i++) ...[
+          if (i > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                '·',
+                style: style.copyWith(color: MobiusColors.textDimOf(context)),
+              ),
+            ),
+          Text(
+            parts[i],
+            style: i == 0 && technicalInfo.format.isNotEmpty
+                ? style.copyWith(
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.6,
+                  )
+                : style,
           ),
-        ),
-        const SizedBox(width: 16),
-        Text(
-          '${technicalInfo.bitsPerSample}-bit',
-          style: TextStyle(
-            color: MobiusColors.textOf(context),
-            fontSize: 13,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-        const SizedBox(width: 16),
-        Text(
-          formatChannels(technicalInfo.channels),
-          style: TextStyle(color: MobiusColors.textOf(context), fontSize: 13),
-        ),
+        ],
       ],
     );
   }
@@ -1003,8 +1027,8 @@ class _AudioOutputInfo extends StatelessWidget {
     final status = audioPlaybackStatusLabel(decision.status);
 
     final statusColor = decision.isNative
-        ? MobiusColors.native
-        : MobiusColors.compatible;
+        ? MobiusColors.nativeOf(context)
+        : MobiusColors.compatibleOf(context);
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -1044,16 +1068,61 @@ class _AudioOutputInfo extends StatelessWidget {
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
-        const SizedBox(width: 8),
-        Text(
-          status,
-          style: TextStyle(
-            color: statusColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-          ),
+        const SizedBox(width: 10),
+        _StatusBadge(
+          label: status,
+          color: statusColor,
+          icon: decision.isNative
+              ? Icons.verified_rounded
+              : Icons.sync_alt_rounded,
         ),
       ],
+    );
+  }
+}
+
+/// Filled pill for the Native / Resampled verdict, so it reads at a glance
+/// on both themes instead of as faint coloured text.
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({
+    required this.label,
+    required this.color,
+    required this.icon,
+  });
+
+  final String label;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Output: $label',
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.55)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+            Text(
+              label.toUpperCase(),
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

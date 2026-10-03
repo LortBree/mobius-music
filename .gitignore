@@ -86,5 +86,29 @@ build/
 # ---------- Test artifacts ----------
 coverage/
 
-# ---------- Kiro ----------
+# ---------- Dev plans / architecture notes ----------
+# Planning docs, specs, handoffs and ADRs stay local; only user-facing docs ship.
+docs/
+*.md
+!README.md
+!**/README.md
+!BUILD.md
+!CHANGELOG.md
+!LICENSE.md
+
+# ---------- AI agent tooling ----------
 .kiro/
+.amazonq/
+.claude/
+.cursor/
+.cursorrules
+.windsurf/
+.windsurfrules
+.continue/
+.aider*
+.codex/
+.gemini/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.github/copilot-instructions.md
