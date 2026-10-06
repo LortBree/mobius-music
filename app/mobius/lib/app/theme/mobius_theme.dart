@@ -16,7 +16,7 @@ abstract final class MobiusTheme {
   static const _darkBorder = Color(0xFF2A2A2A);
   static const _darkText = Color(0xFFEDEDED);
   static const _darkTextDim = Color(0xFF9A9A9A);
-  static const _darkAccent = Color(0xFF8A63D2);
+  static const _darkAccent = Color(0xFF6C63FF); // Violet-blue (ungu biru for Deep Sea theme)
 
   // ---- Light palette (dim stone) -----------------------------------------
   // A dimmed, near-neutral stone instead of sand/cream: relative luminance
@@ -37,7 +37,7 @@ abstract final class MobiusTheme {
   static const _lightSelection = Color(0xFFE0D4C2); // like dark 292631
   static const _lightText = Color(0xFF2A2117); // warm ink, not black
   static const _lightTextDim = Color(0xFF574A3A);
-  static const _lightAccent = Color(0xFF9E441A); // deep burnt orange
+  static const _lightAccent = Color(0xFFFF7020); // Bright warm orange for Sungaze theme
 
   static ThemeData dark() => _build(
     brightness: Brightness.dark,
@@ -72,14 +72,16 @@ abstract final class MobiusTheme {
     required Color secondaryText,
   }) {
     final isDark = brightness == Brightness.dark;
+    final secondaryColor = isDark ? const Color(0xFFC4A8F0) : const Color(0xFF6A3FC0); // Soft lilac
     final colorScheme = ColorScheme(
       brightness: brightness,
       primary: primary,
       onPrimary: isDark ? const Color(0xFFFAFAFA) : const Color(0xFFFFF4EA),
-      secondary: primary,
+      secondary: secondaryColor,
       onSecondary: text,
       surface: surface,
       onSurface: text,
+      surfaceContainerHighest: isDark ? const Color(0xFF262432) : const Color(0xFFDED9D0),
       error: const Color(0xFFE05A5A),
       onError: const Color(0xFFFFFFFF),
     );
@@ -106,6 +108,29 @@ abstract final class MobiusTheme {
       cardTheme: CardThemeData(color: surface, elevation: 0),
       dividerTheme: DividerThemeData(color: border, thickness: 1, space: 1),
       iconTheme: IconThemeData(color: text),
+      navigationBarTheme: NavigationBarThemeData(
+        indicatorColor: primary.withValues(alpha: isDark ? 0.22 : 0.18),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return IconThemeData(color: primary);
+          }
+          return IconThemeData(color: secondaryText);
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return TextStyle(
+              color: primary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            );
+          }
+          return TextStyle(
+            color: secondaryText,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          );
+        }),
+      ),
       extensions: [
         MobiusSurfaces(
           background: background,
@@ -115,8 +140,8 @@ abstract final class MobiusTheme {
           textSecondary: secondaryText,
           accent: primary,
           accentLight: isDark
-              ? const Color(0xFFC4A8F0)
-              : const Color(0xFFB8622E),
+              ? const Color(0xFF9E8FFF)
+              : const Color(0xFFFF9E5A),
           onAccent: colorScheme.onPrimary,
           miniPlayer: isDark ? const Color(0xFF1D1B24) : _lightMiniPlayer,
           selection: isDark ? const Color(0xFF292631) : _lightSelection,

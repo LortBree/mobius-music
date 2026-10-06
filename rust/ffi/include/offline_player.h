@@ -160,6 +160,50 @@ OfflinePlayerResult offline_player_set_volume(
     float volume
 );
 
+OfflinePlayerResult offline_player_set_software_volume(
+    OfflinePlayerHandle *handle,
+    float volume
+);
+
+OfflinePlayerResult offline_player_set_hardware_volume(
+    OfflinePlayerHandle *handle,
+    float volume
+);
+
+OfflinePlayerResult offline_player_get_hardware_volume(
+    OfflinePlayerHandle *handle,
+    float *out_volume
+);
+
+OfflinePlayerResult offline_player_set_bit_perfect_mode(
+    OfflinePlayerHandle *handle,
+    uint8_t enabled
+);
+
+OfflinePlayerResult offline_player_get_bit_perfect_mode(
+    OfflinePlayerHandle *handle,
+    uint8_t *out_enabled
+);
+
+OfflinePlayerResult offline_player_set_volume_normalization(
+    OfflinePlayerHandle *handle,
+    uint8_t enabled
+);
+
+OfflinePlayerResult offline_player_get_volume_normalization(
+    OfflinePlayerHandle *handle,
+    uint8_t *out_enabled
+);
+
+OfflinePlayerResult offline_player_track_gain_db(
+    OfflinePlayerHandle *handle,
+    float *out_gain_db
+);
+
+OfflinePlayerResult offline_player_switch_output_route(
+    OfflinePlayerHandle *handle
+);
+
 OfflinePlayerResult offline_player_set_equalizer_gains(
     OfflinePlayerHandle *handle,
     const float *gains_db,
@@ -392,6 +436,39 @@ OfflinePlayerResult offline_player_last_error(
     OfflinePlayerHandle *handle,
     char *buffer,
     size_t capacity
+);
+
+/*
+ * Live signal path of the currently loaded track: how the source reaches the
+ * output device, for the Signal path UI. ADDITIVE: new function + struct; no
+ * existing export changed.
+ *
+ * Returns NOT_FOUND when no track is loaded (output_sample_rate is then 0).
+ * `bit_perfect` is the engine's ground truth and is ALWAYS 0 on Android (the
+ * system mixer owns that route); `route` is 0 (unknown) from the engine and is
+ * filled in by the host on Android; `device_name` may be empty.
+ */
+typedef struct OfflinePlayerSignalPath {
+    uint32_t output_sample_rate;     /* 0 when not loaded */
+    uint32_t output_channels;
+    uint32_t output_bits_per_sample; /* 32 for float */
+    uint8_t  output_is_float;
+    uint8_t  resampling;             /* engine converts rate before output */
+    uint8_t  equalizer_active;       /* enabled && any |gain| > 0.01 dB */
+    uint8_t  bit_perfect;            /* engine ground truth; ALWAYS 0 on Android */
+    uint32_t equalizer_bands;
+    float    volume;                 /* 0..1 software volume */
+    uint32_t buffer_ms;              /* PCM queued ahead of the device */
+    uint64_t underrun_samples;
+    uint64_t callback_count;
+    int32_t  route;                  /* 0 unknown 1 speaker 2 wired 3 bluetooth 4 usb */
+    char     output_api[16];         /* "AAudio" / "CoreAudio", NUL-terminated */
+    char     device_name[96];        /* NUL-terminated UTF-8, may be empty */
+} OfflinePlayerSignalPath;
+
+OfflinePlayerResult offline_player_signal_path(
+    OfflinePlayerHandle *handle,
+    OfflinePlayerSignalPath *out
 );
 
 #ifdef __cplusplus

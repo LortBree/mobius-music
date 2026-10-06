@@ -58,12 +58,19 @@ pub struct PcmProducer {
 
 pub struct PcmConsumer {
     consumer: rtrb::Consumer<PcmSample>,
+    capacity: usize,
 }
 
 pub fn pcm_ring_buffer(config: PcmRingConfig) -> (PcmProducer, PcmConsumer) {
     let (producer, consumer) = rtrb::RingBuffer::<PcmSample>::new(config.capacity_samples);
 
-    (PcmProducer { producer }, PcmConsumer { consumer })
+    (
+        PcmProducer { producer },
+        PcmConsumer {
+            consumer,
+            capacity: config.capacity_samples,
+        },
+    )
 }
 
 impl PcmProducer {
@@ -115,6 +122,11 @@ impl PcmConsumer {
     #[inline]
     pub fn len(&self) -> usize {
         self.consumer.slots()
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.capacity
     }
 
     #[inline]

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 import '../../../app/theme/colors.dart';
 import '../data/ffi_library_repository.dart';
 import '../../../playback/player_controller.dart';
@@ -32,7 +33,7 @@ class ArtistsPage extends StatefulWidget {
   final int libraryVersion;
 
   @override
-  State<ArtistsPage> createState() => _ArtistsPageState();
+  State<ArtistsPage> createState() => ArtistsPageState();
 }
 
 class _ArtistEntry {
@@ -53,11 +54,20 @@ class _ArtistBuilder {
   final List<int> trackIds = [];
 }
 
-class _ArtistsPageState extends State<ArtistsPage> {
+class ArtistsPageState extends State<ArtistsPage> {
   List<_ArtistEntry> _artists = const [];
   _ArtistEntry? _selectedArtist;
   bool _loading = true;
   Object? _error;
+
+  /// Returns true if back navigation was consumed (closing artist detail).
+  bool handleBack() {
+    if (_selectedArtist != null) {
+      setState(() => _selectedArtist = null);
+      return true;
+    }
+    return false;
+  }
 
   @override
   void initState() {
@@ -210,6 +220,28 @@ class _ArtistsPageState extends State<ArtistsPage> {
       );
     }
 
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (isMobile) {
+      return GridView.builder(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
+        itemCount: _artists.length,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 14,
+          mainAxisSpacing: 18,
+          childAspectRatio: 0.76,
+        ),
+        itemBuilder: (context, index) {
+          final artist = _artists[index];
+          return _MobileArtistCard(
+            artist: artist,
+            repository: widget.repository,
+            onTap: () => _openArtist(artist),
+          );
+        },
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: CustomScrollView(
@@ -309,6 +341,73 @@ class _ArtistCard extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileArtistCard extends StatelessWidget {
+  const _MobileArtistCard({
+    required this.artist,
+    required this.repository,
+    required this.onTap,
+  });
+
+  final _ArtistEntry artist;
+  final LibraryRepository repository;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Column(
+          children: [
+            AspectRatio(
+              aspectRatio: 1,
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: MobiusColors.panelOf(context),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: GroupArtwork(
+                  repository: repository,
+                  source: artist.artwork,
+                  decodeSize: 320,
+                  filterQuality: FilterQuality.medium,
+                  placeholder: const _ArtistPlaceholder(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              artist.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: MobiusColors.textOf(context),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              '${artist.trackIds.length} tracks',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: MobiusColors.textDimOf(context),
+                fontSize: 12,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -471,95 +570,188 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final currentTrackId = _safeCurrentTrackId;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 24, 36, 24),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 16 : 32,
+        isMobile ? 12 : 24,
+        isMobile ? 16 : 36,
+        isMobile ? 90 : 24,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              IconButton(
-                tooltip: 'Back to artists',
-                onPressed: widget.onBack,
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'ARTIST',
-                style: TextStyle(
-                  color: MobiusColors.accentLightOf(context),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.4,
+          if (!isMobile) ...[
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Back to artists',
+                  onPressed: widget.onBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Container(
-                width: 220,
-                height: 220,
-                decoration: BoxDecoration(
-                  color: MobiusColors.panelOf(context),
-                  borderRadius: BorderRadius.circular(110),
+                const SizedBox(width: 6),
+                Text(
+                  'ARTIST',
+                  style: TextStyle(
+                    color: MobiusColors.accentLightOf(context),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.4,
+                  ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                // 220 logical px; 440 covers a 2x display.
-                child: GroupArtwork(
-                  repository: widget.repository,
-                  source: widget.artist.artwork,
-                  decodeSize: 440,
-                  filterQuality: FilterQuality.high,
-                  placeholder: const _ArtistPlaceholder(),
+              ],
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (isMobile) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 105,
+                  height: 105,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: MobiusColors.panelOf(context),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: GroupArtwork(
+                    repository: widget.repository,
+                    source: widget.artist.artwork,
+                    decodeSize: 210,
+                    filterQuality: FilterQuality.medium,
+                    placeholder: const _ArtistPlaceholder(),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 28),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
+                const SizedBox(width: 16),
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
+                      Text(
+                        'ARTIST',
+                        style: TextStyle(
+                          color: MobiusColors.accentLightOf(context),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
                       Text(
                         widget.artist.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: MobiusColors.textOf(context),
-                          fontSize: 34,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 4),
                       Text(
                         '${widget.artist.trackIds.length} tracks',
                         style: TextStyle(
                           color: MobiusColors.textDimOf(context),
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 22),
-                      FilledButton.icon(
-                        onPressed: _playArtist,
-                        icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                        label: const Text('Play Artist'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: MobiusColors.accentOf(context),
-                          foregroundColor: MobiusColors.onAccentOf(context),
+                          fontSize: 12,
                         ),
                       ),
                     ],
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: FilledButton.icon(
+                onPressed: _playArtist,
+                icon: const Icon(Icons.play_arrow_rounded, size: 22),
+                label: const Text('Play Artist'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: MobiusColors.accentOf(context),
+                  foregroundColor: MobiusColors.onAccentOf(context),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
-            ],
-          ),
-          const SizedBox(height: 28),
+            ),
+          ] else ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  width: 220,
+                  height: 220,
+                  decoration: BoxDecoration(
+                    color: MobiusColors.panelOf(context),
+                    borderRadius: BorderRadius.circular(110),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  // 220 logical px; 440 covers a 2x display.
+                  child: GroupArtwork(
+                    repository: widget.repository,
+                    source: widget.artist.artwork,
+                    decodeSize: 440,
+                    filterQuality: FilterQuality.high,
+                    placeholder: const _ArtistPlaceholder(),
+                  ),
+                ),
+                const SizedBox(width: 28),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.artist.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: MobiusColors.textOf(context),
+                            fontSize: 34,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '${widget.artist.trackIds.length} tracks',
+                          style: TextStyle(
+                            color: MobiusColors.textDimOf(context),
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(height: 22),
+                        FilledButton.icon(
+                          onPressed: _playArtist,
+                          icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                          label: const Text('Play Artist'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: MobiusColors.accentOf(context),
+                            foregroundColor: MobiusColors.onAccentOf(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 20),
           Expanded(
             child: ListView.builder(
               itemCount: _groups.length,
@@ -603,6 +795,7 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
     return TrackContextMenu(
       key: ValueKey('context-$trackId'),
       track: metadata,
+      repository: widget.repository,
       collections: widget.collections,
       playerController: widget.playerController,
       removeLabel: 'Remove from Library',
@@ -624,6 +817,28 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
         isCurrent: isCurrent,
         duration: _currentDuration(isCurrent),
         onPlay: () => _play(queueIndex),
+        onMore: () {
+          TrackContextMenu.showForTrack(
+            context: context,
+            position: Offset.zero,
+            track: metadata,
+            repository: widget.repository,
+            collections: widget.collections,
+            playerController: widget.playerController,
+            removeLabel: 'Remove from Library',
+            onRemove: () async {
+              await widget.collections.removeFromLibrary(trackId);
+              widget.onLibraryChanged();
+            },
+            onChanged: widget.onLibraryChanged,
+            onGoToArtist: trackArtistName(metadata).isEmpty
+                ? null
+                : () => widget.onGoToArtist(trackArtistName(metadata)),
+            onGoToAlbum: metadata.album.trim().isEmpty
+                ? null
+                : () => widget.onGoToAlbum(metadata),
+          );
+        },
       ),
     );
   }

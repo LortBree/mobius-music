@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/ffi/offline_player.dart';
+import '../core/platform/android_media_session.dart';
 import '../features/library/data/ffi_library_repository.dart';
-import 'mobius_shell.dart';
+import 'adaptive_shell.dart';
 import 'theme/mobius_theme.dart';
 import '../playback/playback_settings.dart';
 import '../playback/player_controller.dart';
+import '../playback/presentation/volume_floating_panel.dart';
+import 'widgets/mobius_loading_view.dart';
 
 /// Lets descendants (the Settings page) read and change the app theme mode
 /// without a state-management dependency -- consistent with the app's plain
@@ -34,8 +37,10 @@ class _MobiusAppState extends State<MobiusApp> {
 
   late final FfiLibraryRepository _libraryRepository;
   late final PlayerController _playerController;
+  late final AndroidMediaSessionBridge _androidMediaSession;
 
   ThemeMode _themeMode = ThemeMode.dark;
+  bool _isReady = false;
 
   @override
   void initState() {
@@ -46,9 +51,23 @@ class _MobiusAppState extends State<MobiusApp> {
       widget.player,
       onVolumeChanged: PlaybackSettings.saveVolumeSoon,
     );
+    // No-op off Android: mirrors playback into the media notification and
+    // lock screen, and routes their buttons back to the controller.
+    _androidMediaSession =
+        AndroidMediaSessionBridge(_playerController, _libraryRepository)
+          ..start();
 
-    unawaited(PlaybackSettings.restore(_playerController));
-    _loadThemeMode();
+    _initApp();
+  }
+
+  Future<void> _initApp() async {
+    await Future.wait([
+      PlaybackSettings.restore(_playerController),
+      _loadThemeMode(),
+      Future<void>.delayed(const Duration(milliseconds: 700)),
+    ]);
+    if (!mounted) return;
+    setState(() => _isReady = true);
   }
 
   Future<void> _loadThemeMode() async {
@@ -78,19 +97,44 @@ class _MobiusAppState extends State<MobiusApp> {
       theme: MobiusTheme.light(),
       darkTheme: MobiusTheme.dark(),
       themeMode: _themeMode,
-      home: MobiusShell(
-        repository: _libraryRepository,
-        playerController: _playerController,
-        themeController: ThemeModeController(
-          mode: _themeMode,
-          setMode: _setThemeMode,
-        ),
+      builder: (context, child) {
+        return Stack(
+          children: [
+            if (child != null) child,
+            VolumeFloatingPanel(controller: _playerController),
+          ],
+        );
+      },
+      home: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 350),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        child: _isReady
+            ? AdaptiveShell(
+                key: const ValueKey('adaptive_shell'),
+                repository: _libraryRepository,
+                playerController: _playerController,
+                themeController: ThemeModeController(
+                  mode: _themeMode,
+                  setMode: _setThemeMode,
+                ),
+              )
+            : const Scaffold(
+                key: ValueKey('startup_loading'),
+                backgroundColor: Colors.black,
+                body: MobiusLoadingView(
+                  size: 280,
+                  backgroundColor: Colors.black,
+                ),
+              ),
       ),
     );
   }
 
   @override
   void dispose() {
+    _androidMediaSession.dispose();
+    _playerController.dispose();
     widget.player.dispose();
     super.dispose();
   }

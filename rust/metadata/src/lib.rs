@@ -15,7 +15,7 @@ pub struct EmbeddedArtwork {
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct EmbeddedMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -27,6 +27,8 @@ pub struct EmbeddedMetadata {
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
     pub artwork: Option<EmbeddedArtwork>,
+    pub track_gain_db: Option<f32>,
+    pub track_peak: Option<f32>,
 }
 
 pub fn read(path: &Path) -> Result<EmbeddedMetadata, MetadataError> {
@@ -50,6 +52,22 @@ pub fn read(path: &Path) -> Result<EmbeddedMetadata, MetadataError> {
 
     let artwork = select_artwork(tag.pictures());
 
+    let track_gain_db = tag
+        .get_string(ItemKey::ReplayGainTrackGain)
+        .and_then(parse_replaygain_db)
+        .or_else(|| {
+            tag.get_string(ItemKey::ReplayGainAlbumGain)
+                .and_then(parse_replaygain_db)
+        });
+
+    let track_peak = tag
+        .get_string(ItemKey::ReplayGainTrackPeak)
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .or_else(|| {
+            tag.get_string(ItemKey::ReplayGainAlbumPeak)
+                .and_then(|s| s.trim().parse::<f32>().ok())
+        });
+
     Ok(EmbeddedMetadata {
         title: tag.title().map(|value| value.into_owned()),
 
@@ -70,6 +88,10 @@ pub fn read(path: &Path) -> Result<EmbeddedMetadata, MetadataError> {
         disc_number,
 
         artwork,
+
+        track_gain_db,
+
+        track_peak,
     })
 }
 
@@ -89,6 +111,12 @@ fn select_artwork(pictures: &[lofty::picture::Picture]) -> Option<EmbeddedArtwor
 
         data: picture.data().to_vec(),
     })
+}
+
+pub fn parse_replaygain_db(s: &str) -> Option<f32> {
+    let s = s.trim();
+    let s = s.strip_suffix("dB").or_else(|| s.strip_suffix("db")).unwrap_or(s).trim();
+    s.parse::<f32>().ok()
 }
 
 #[cfg(test)]
@@ -127,5 +155,14 @@ mod tests {
     #[test]
     fn empty_picture_list_has_no_artwork() {
         assert_eq!(select_artwork(&[]), None);
+    }
+
+    #[test]
+    fn parses_replaygain_values() {
+        assert_eq!(parse_replaygain_db("-6.50 dB"), Some(-6.5));
+        assert_eq!(parse_replaygain_db("+2.1 dB"), Some(2.1));
+        assert_eq!(parse_replaygain_db("-3.2 db"), Some(-3.2));
+        assert_eq!(parse_replaygain_db("1.5"), Some(1.5));
+        assert_eq!(parse_replaygain_db("invalid"), None);
     }
 }

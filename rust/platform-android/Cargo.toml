@@ -1,0 +1,13 @@
+[package]
+name = "offline-player-platform-android"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+offline-player-audio-core = { path = "../audio-core" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+libusb1-sys = { version = "0.7", features = ["vendored"] }
+rusb = { version = "0.9", features = ["vendored"] }
+libc = "0.2"

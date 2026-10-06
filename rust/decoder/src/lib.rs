@@ -384,15 +384,40 @@ fn stream_internal(
 
         let target_ts = Timestamp::new(target_ts_value);
 
-        let seeked_to = format
-            .seek(
-                SeekMode::Accurate,
-                SeekTo::Timestamp {
-                    ts: target_ts,
-                    track_id,
-                },
-            )
-            .map_err(StreamError::Symphonia)?;
+        let seeked_to = match format.seek(
+            SeekMode::Accurate,
+            SeekTo::Timestamp {
+                ts: target_ts,
+                track_id,
+            },
+        ) {
+            Ok(seeked) => seeked,
+            Err(SymphoniaError::IoError(err))
+                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                return Ok((
+                    target_frame,
+                    StreamStats {
+                        sample_rate,
+                        channels,
+                        decoded_frames: 0,
+                        pushed_samples: 0,
+                    },
+                ));
+            }
+            Err(SymphoniaError::SeekError(_)) => {
+                return Ok((
+                    target_frame,
+                    StreamStats {
+                        sample_rate,
+                        channels,
+                        decoded_frames: 0,
+                        pushed_samples: 0,
+                    },
+                ));
+            }
+            Err(err) => return Err(StreamError::Symphonia(err)),
+        };
 
         let actual_ts = seeked_to.actual_ts;
         let actual_value = actual_ts.get();
@@ -411,10 +436,19 @@ fn stream_internal(
         actual_start_frame = 0;
     }
 
+    #[cfg(target_os = "android")]
+    unsafe {
+        let tid = libc::gettid();
+        let _ = libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, -16);
+    }
+
     let mut stream_frame = actual_start_frame;
 
     let mut decoded_frames = 0u64;
     let mut pushed_samples = 0u64;
+
+    let mut source_samples = Vec::with_capacity(8192);
+    let mut output_samples = Vec::with_capacity(8192);
 
     loop {
         if cancel.load(Ordering::Acquire) {
@@ -438,6 +472,10 @@ fn stream_internal(
                 break;
             }
 
+            Err(SymphoniaError::SeekError(_)) => {
+                break;
+            }
+
             Err(SymphoniaError::IoError(err)) => {
                 return Err(StreamError::Io(err));
             }
@@ -453,6 +491,12 @@ fn stream_internal(
 
         let decoded = match decoder.decode(&packet) {
             Ok(buffer) => buffer,
+
+            Err(SymphoniaError::IoError(err))
+                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
 
             Err(SymphoniaError::DecodeError(err)) => {
                 return Err(StreamError::Decode(err.to_string()));
@@ -485,7 +529,7 @@ fn stream_internal(
         // stream_frame advances by the ENTIRE decoded buffer,
         // not only by the discarded prefix.
         //
-        let mut source_samples = Vec::with_capacity(decoded.frames() * channels);
+        source_samples.clear();
         decode_buffer_to_i32(decoded, source_bits, &mut source_samples)?;
 
         let samples_to_skip = if let Some(target_frame) = seek_frame {
@@ -506,13 +550,7 @@ fn stream_internal(
         }
 
         if let Some(resampler) = resampler.as_mut() {
-            let mut output_samples = Vec::with_capacity(
-                ((source_samples.len() / channels) as f64 * output_sample_rate as f64
-                    / sample_rate as f64)
-                    .ceil() as usize
-                    * channels,
-            );
-
+            output_samples.clear();
             resampler
                 .process(&source_samples, &mut output_samples)
                 .map_err(StreamError::Resampler)?;
@@ -526,7 +564,7 @@ fn stream_internal(
     }
 
     if let Some(resampler) = resampler.as_mut() {
-        let mut output_samples = Vec::new();
+        output_samples.clear();
         resampler
             .flush(&mut output_samples)
             .map_err(StreamError::Resampler)?;
@@ -558,7 +596,7 @@ fn stream_internal(
 /// the entire playback. 5 ms is ~441 stereo samples at 44.1 kHz -- a rounding
 /// error against the 262,144-sample ring -- so sleeping cannot starve the
 /// realtime consumer, and it bounds cancel/seek latency to one interval.
-const BACKOFF: Duration = Duration::from_millis(5);
+const BACKOFF: Duration = Duration::from_millis(1);
 
 fn wait_while_paused(cancel: &AtomicBool, paused: &AtomicBool) -> Result<(), StreamError> {
     while paused.load(Ordering::Acquire) {

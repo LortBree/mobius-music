@@ -1,13 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 
 import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../data/ffi_library_repository.dart';
 import '../data/user_collections.dart';
 import '../../../playback/playback_time_format.dart';
+import 'albums_page.dart';
+import 'artists_page.dart';
+import 'collections_pages.dart';
+import 'group_artwork.dart';
 import 'track_context_menu.dart';
+import '../../../app/widgets/mobius_loading_view.dart';
 
 class LibraryPage extends StatefulWidget {
   const LibraryPage({
@@ -36,10 +42,14 @@ class LibraryPage extends StatefulWidget {
   final int libraryVersion;
 
   @override
-  State<LibraryPage> createState() => _LibraryPageState();
+  State<LibraryPage> createState() => LibraryPageState();
 }
 
-class _LibraryPageState extends State<LibraryPage> {
+class LibraryPageState extends State<LibraryPage> {
+  final GlobalKey<AlbumsPageState> _albumsKey = GlobalKey<AlbumsPageState>();
+  final GlobalKey<ArtistsPageState> _artistsKey = GlobalKey<ArtistsPageState>();
+  final GlobalKey<PlaylistsPageState> _playlistsKey = GlobalKey<PlaylistsPageState>();
+
   final List<TrackMetadata> _tracks = [];
   // Bumped whenever _tracks is mutated; part of the _visibleTracks cache key.
   int _tracksVersion = 0;
@@ -54,6 +64,11 @@ class _LibraryPageState extends State<LibraryPage> {
 
   bool _loading = true;
   String? _error;
+
+  /// Which mobile text-tab is active (Songs/Albums/Artists/Playlists). Only
+  /// used on the mobile (< 900) path; desktop ignores it.
+  _MobileLibraryTab _mobileTab = _MobileLibraryTab.songs;
+
 
   @override
   void initState() {
@@ -277,6 +292,554 @@ class _LibraryPageState extends State<LibraryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    return isMobile ? _buildMobile(context) : _buildDesktop(context);
+  }
+
+  // ---------------------------------------------------------------------
+  /// Returns true if back navigation was handled internally (closing detail or switching tab to songs).
+  bool handleBack() {
+    if (!mounted) return false;
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (!isMobile) return false;
+
+    if (_mobileTab == _MobileLibraryTab.albums) {
+      if (_albumsKey.currentState?.handleBack() == true) {
+        return true;
+      }
+      setState(() => _mobileTab = _MobileLibraryTab.songs);
+      return true;
+    }
+
+    if (_mobileTab == _MobileLibraryTab.artists) {
+      if (_artistsKey.currentState?.handleBack() == true) {
+        return true;
+      }
+      setState(() => _mobileTab = _MobileLibraryTab.songs);
+      return true;
+    }
+
+    if (_mobileTab == _MobileLibraryTab.playlists) {
+      if (_playlistsKey.currentState?.handleBack() == true) {
+        return true;
+      }
+      setState(() => _mobileTab = _MobileLibraryTab.songs);
+      return true;
+    }
+
+    return false;
+  }
+
+  // Mobile (< 900): One UI v4 — large title, text tabs, grouped Songs.
+  // ---------------------------------------------------------------------
+  Widget _buildMobile(BuildContext context) {
+    // Albums/Artists/Playlists reuse the existing page widgets (restyle, not
+    // re-implement data). They render as plain content and are mobile-aware.
+    switch (_mobileTab) {
+      case _MobileLibraryTab.albums:
+        return _mobileTabScaffold(
+          context,
+          child: AlbumsPage(
+            key: _albumsKey,
+            repository: widget.repository,
+            playerController: widget.playerController,
+            collections: widget.collections,
+            onLibraryChanged: widget.onLibraryChanged,
+            onGoToArtist: widget.onGoToArtist,
+            onGoToAlbum: widget.onGoToAlbum,
+            libraryVersion: widget.libraryVersion,
+          ),
+        );
+      case _MobileLibraryTab.artists:
+        return _mobileTabScaffold(
+          context,
+          child: ArtistsPage(
+            key: _artistsKey,
+            repository: widget.repository,
+            playerController: widget.playerController,
+            collections: widget.collections,
+            onLibraryChanged: widget.onLibraryChanged,
+            onGoToArtist: widget.onGoToArtist,
+            onGoToAlbum: widget.onGoToAlbum,
+            libraryVersion: widget.libraryVersion,
+          ),
+        );
+      case _MobileLibraryTab.playlists:
+        return _mobileTabScaffold(
+          context,
+          child: PlaylistsPage(
+            key: _playlistsKey,
+            repository: widget.repository,
+            playerController: widget.playerController,
+            collections: widget.collections,
+            onGoToArtist: widget.onGoToArtist,
+            onGoToAlbum: widget.onGoToAlbum,
+            collectionsVersion: widget.libraryVersion,
+          ),
+        );
+      case _MobileLibraryTab.songs:
+        return _mobileTabScaffold(
+          context,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _buildMobileSongs(context),
+          ),
+        );
+    }
+  }
+
+  /// The shared mobile chrome: large title + counts, top-right search/overflow,
+  /// and the glowing text-tab bar, with [child] below.
+  Widget _mobileTabScaffold(BuildContext context, {required Widget child}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.favoritesOnly ? 'Favorites' : 'Library',
+                        style: TextStyle(
+                          fontSize: 34,
+                          fontWeight: FontWeight.w600,
+                          height: 1.05,
+                          color: MobiusColors.textOf(context),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _mobileCountsSubtitle(),
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: MobiusColors.textDimOf(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildMobileFilterMenu(context),
+                _buildMobileOverflowMenu(context),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildMobileTabBar(context),
+          const SizedBox(height: 10),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+
+  String _mobileCountsSubtitle() {
+    if (_loading) return '…';
+    final count = _tracks.length;
+    switch (_mobileTab) {
+      case _MobileLibraryTab.songs:
+        return '$count ${count == 1 ? 'song' : 'songs'}';
+      case _MobileLibraryTab.albums:
+        return 'Albums';
+      case _MobileLibraryTab.artists:
+        return 'Artists';
+      case _MobileLibraryTab.playlists:
+        return 'Playlists';
+    }
+  }
+
+  Widget _buildMobileFilterMenu(BuildContext context) {
+    return IconButton(
+      tooltip: 'Filter genre',
+      icon: Icon(
+        Icons.tune_rounded,
+        color: _genreFilter != null
+            ? MobiusColors.accentOf(context)
+            : MobiusColors.textDimOf(context),
+      ),
+      onPressed: () => _openMobileGenreFilter(context),
+    );
+  }
+
+  void _openMobileGenreFilter(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: MobiusColors.panelOf(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.65,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 10),
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: MobiusColors.borderOf(context),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Filter Genre',
+                        style: TextStyle(
+                          color: MobiusColors.textOf(context),
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const Spacer(),
+                      if (_genreFilter != null)
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _genreFilter = null);
+                            Navigator.pop(ctx);
+                          },
+                          child: const Text('Reset'),
+                        ),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: MobiusColors.borderOf(context)),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      ListTile(
+                        leading: Icon(
+                          Icons.check_rounded,
+                          size: 20,
+                          color: _genreFilter == null
+                              ? MobiusColors.accentOf(context)
+                              : Colors.transparent,
+                        ),
+                        title: const Text('All genres'),
+                        onTap: () {
+                          setState(() => _genreFilter = null);
+                          Navigator.pop(ctx);
+                        },
+                      ),
+                      for (final genre in _genres)
+                        ListTile(
+                          leading: Icon(
+                            Icons.check_rounded,
+                            size: 20,
+                            color: _genreFilter == genre
+                                ? MobiusColors.accentOf(context)
+                                : Colors.transparent,
+                          ),
+                          title: Text(genre),
+                          onTap: () {
+                            setState(() => _genreFilter = genre);
+                            Navigator.pop(ctx);
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMobileOverflowMenu(BuildContext context) {
+    return PopupMenuButton<_LibrarySort>(
+      tooltip: 'Sort',
+      color: MobiusColors.panelOf(context),
+      icon: Icon(
+        Icons.more_vert_rounded,
+        color: MobiusColors.textDimOf(context),
+      ),
+      onSelected: _setSort,
+      itemBuilder: (context) => [
+        for (final entry in const [
+          (_LibrarySort.title, 'Title'),
+          (_LibrarySort.artist, 'Artist'),
+          (_LibrarySort.album, 'Album'),
+          (_LibrarySort.releaseDate, 'Release date'),
+        ])
+          PopupMenuItem<_LibrarySort>(
+            value: entry.$1,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    entry.$2,
+                    style: TextStyle(color: MobiusColors.textOf(context)),
+                  ),
+                ),
+                if (_sort == entry.$1)
+                  Icon(
+                    _sortAscending
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded,
+                    size: 17,
+                    color: MobiusColors.accentOf(context),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMobileTabBar(BuildContext context) {
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        children: [
+          for (final tab in _MobileLibraryTab.values)
+            _MobileTab(
+              label: tab.label,
+              selected: _mobileTab == tab,
+              onTap: () => setState(() => _mobileTab = tab),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMobileSongs(BuildContext context) {
+    if (_loading) {
+      return const MobiusLoadingView(
+        size: 220,
+        backgroundColor: Colors.transparent,
+      );
+    }
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: MobiusColors.unsupported),
+        ),
+      );
+    }
+
+    final tracks = _visibleTracks;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_tracks.isEmpty)
+          Expanded(
+            child: Center(
+              child: Text(
+                widget.favoritesOnly ? 'No favorites yet' : 'No tracks found',
+                style: TextStyle(color: MobiusColors.textDimOf(context)),
+              ),
+            ),
+          )
+        else if (tracks.isEmpty)
+          Expanded(
+            child: Center(
+              child: Text(
+                'No tracks match your filters',
+                style: TextStyle(color: MobiusColors.textDimOf(context)),
+              ),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 90),
+              itemCount: tracks.length,
+              itemBuilder: (context, i) =>
+                  _buildMobileSongRow(context, tracks[i], i),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMobileSongRow(
+    BuildContext context,
+    TrackMetadata track,
+    int index,
+  ) {
+    final isCurrent = track.trackId == widget.currentTrackId;
+    final title = track.title.trim().isEmpty ? 'Unknown title' : track.title;
+    final artist = track.artist.trim().isEmpty
+        ? 'Unknown artist'
+        : track.artist;
+    final album = track.album.trim();
+    final subtitle = album.isEmpty ? artist : '$artist · $album';
+
+    final row = Material(
+      color: isCurrent
+          ? MobiusColors.accentOf(context).withValues(alpha: 0.20)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: () => _playTrack(track),
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      GroupArtwork(
+                        repository: widget.repository,
+                        source: GroupArtworkSource([track.trackId]),
+                        decodeSize: 88,
+                        filterQuality: FilterQuality.medium,
+                        placeholder: Container(
+                          color: MobiusColors.borderOf(context).withValues(alpha: 0.4),
+                          alignment: Alignment.center,
+                          child: Icon(
+                            isCurrent
+                                ? Icons.equalizer_rounded
+                                : Icons.music_note_rounded,
+                            size: 20,
+                            color: isCurrent
+                                ? MobiusColors.accentLightOf(context)
+                                : MobiusColors.textDimOf(context),
+                          ),
+                        ),
+                      ),
+                      if (isCurrent)
+                        Container(
+                          color: MobiusColors.accentOf(context).withValues(alpha: 0.35),
+                          child: Center(
+                            child: Icon(
+                              Icons.equalizer_rounded,
+                              size: 20,
+                              color: MobiusColors.accentLightOf(context),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isCurrent
+                            ? MobiusColors.accentOf(context)
+                            : MobiusColors.textOf(context),
+                        fontSize: 14,
+                        fontWeight: isCurrent
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Builder(
+                builder: (btnContext) => IconButton(
+                  icon: const Icon(Icons.more_vert_rounded),
+                  iconSize: 20,
+                  color: MobiusColors.textDimOf(context),
+                  tooltip: 'More options',
+                  onPressed: () {
+                    final box = btnContext.findRenderObject() as RenderBox;
+                    final position = box.localToGlobal(Offset(0, box.size.height));
+                    TrackContextMenu.showForTrack(
+                      context: context,
+                      position: position,
+                      track: track,
+                      repository: widget.repository,
+                      collections: widget.collections,
+                      playerController: widget.playerController,
+                      removeLabel: widget.favoritesOnly
+                          ? 'Remove from Favorites'
+                          : 'Remove from Library',
+                      onRemove: () => _removeTrack(track),
+                      onChanged: widget.onLibraryChanged,
+                      onGoToArtist: trackArtistName(track).isEmpty
+                          ? null
+                          : () => widget.onGoToArtist(trackArtistName(track)),
+                      onGoToAlbum: track.album.trim().isEmpty
+                          ? null
+                          : () => widget.onGoToAlbum(track),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return TrackContextMenu(
+      key: ValueKey('song-${track.trackId}-$index'),
+      track: track,
+      repository: widget.repository,
+      collections: widget.collections,
+      playerController: widget.playerController,
+      removeLabel: widget.favoritesOnly
+          ? 'Remove from Favorites'
+          : 'Remove from Library',
+      onRemove: () => _removeTrack(track),
+      onChanged: widget.onLibraryChanged,
+      onGoToArtist: trackArtistName(track).isEmpty
+          ? null
+          : () => widget.onGoToArtist(trackArtistName(track)),
+      onGoToAlbum: track.album.trim().isEmpty
+          ? null
+          : () => widget.onGoToAlbum(track),
+      child: row,
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Desktop (>= 900): unchanged.
+  // ---------------------------------------------------------------------
+  Widget _buildDesktop(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
       child: Column(
@@ -308,8 +871,13 @@ class _LibraryPageState extends State<LibraryPage> {
           const SizedBox(height: 24),
           _buildSearchAndFilters(),
           const SizedBox(height: 20),
-          _buildTableHeader(),
-          Divider(height: 1, color: MobiusColors.borderOf(context)),
+          // The fixed-column table header is a desktop affordance; mobile list
+          // rows carry their own layout and the header would overflow at phone
+          // widths, so it (and its divider) render only on the desktop path.
+          if (MediaQuery.sizeOf(context).width >= kMobileBreakpoint) ...[
+            _buildTableHeader(),
+            Divider(height: 1, color: MobiusColors.borderOf(context)),
+          ],
           const SizedBox(height: 4),
           Expanded(child: _buildTrackList()),
         ],
@@ -609,7 +1177,10 @@ class _LibraryPageState extends State<LibraryPage> {
 
   Widget _buildTrackList() {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+      return const MobiusLoadingView(
+        size: 220,
+        backgroundColor: Colors.transparent,
+      );
     }
 
     if (_error != null) {
@@ -650,6 +1221,7 @@ class _LibraryPageState extends State<LibraryPage> {
 
         return TrackContextMenu(
           track: track,
+          repository: widget.repository,
           collections: widget.collections,
           playerController: widget.playerController,
           removeLabel: widget.favoritesOnly
@@ -679,6 +1251,69 @@ class _LibraryPageState extends State<LibraryPage> {
 }
 
 enum _LibrarySort { title, artist, album, releaseDate }
+
+/// Mobile Library text-tabs. Albums/Artists/Playlists reuse the existing page
+/// widgets; Songs is the Library's own grouped list.
+enum _MobileLibraryTab {
+  songs('Songs'),
+  albums('Albums'),
+  artists('Artists'),
+  playlists('Playlists');
+
+  const _MobileLibraryTab(this.label);
+  final String label;
+}
+
+/// A single mobile text-tab with a short glowing accent bar under the active
+/// one.
+class _MobileTab extends StatelessWidget {
+  const _MobileTab({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = MobiusColors.accentOf(context);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: selected
+                    ? MobiusColors.textOf(context)
+                    : MobiusColors.textDimOf(context),
+                fontSize: 15,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+            const SizedBox(height: 6),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: selected ? 22 : 0,
+              height: 3,
+              decoration: BoxDecoration(
+                color: selected ? accent : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _LibrarySortAction {
   const _LibrarySortAction({

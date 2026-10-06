@@ -537,6 +537,7 @@ mod tests {
                 track_number: Some(7),
                 disc_number: Some(1),
                 artwork: None,
+                ..Default::default()
             },
             normalized_metadata: NormalizedMetadata {
                 source_path: asset_path.clone(),
@@ -552,6 +553,7 @@ mod tests {
                     track_number: Some(7),
                     disc_number: Some(1),
                     composer: Some("Test Composer".to_owned()),
+                    ..Default::default()
                 },
             },
             tracks: vec![ScannedTrack {

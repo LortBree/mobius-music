@@ -70,6 +70,18 @@ abstract final class MobiusColors {
   /// Accent (interactive) colour.
   static Color accentOf(BuildContext c) => MobiusSurfaces.of(c).accent;
 
+  /// Violet-blue accent for standard playback and volume.
+  static Color violetBlueOf(BuildContext c) => Theme.of(c).colorScheme.primary;
+
+  /// Magenta accent for DAC and bit-perfect hardware output.
+  static Color magentaOf(BuildContext c) {
+    final secondary = Theme.of(c).colorScheme.secondary;
+    if (secondary == ambientMagenta) {
+      return secondary;
+    }
+    return ambientMagenta;
+  }
+
   /// Lighter accent, for selected/active glyphs.
   static Color accentLightOf(BuildContext c) =>
       MobiusSurfaces.of(c).accentLight;

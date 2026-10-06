@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- FiiO JadeAudio JA11: VID 0x2972 (10610), PID 0x0102 (258) -->
+    <usb-device vendor-id="10610" product-id="258" />
+</resources>

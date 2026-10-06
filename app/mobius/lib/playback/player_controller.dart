@@ -1,11 +1,16 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/widgets.dart';
 
+import '../core/audio/usb_service.dart';
 import '../core/ffi/offline_player.dart';
-import '../core/macos/macos_playback_activity.dart';
+import '../core/platform/audio_route.dart';
+import '../core/platform/playback_activity.dart';
 import 'audio_output_policy.dart';
+import 'playback_settings.dart';
 
 class PlayerController {
   PlayerController(
@@ -14,14 +19,23 @@ class PlayerController {
     this.onVolumeChanged,
     Future<void> Function()? beginPlaybackActivity,
     Future<void> Function()? endPlaybackActivity,
+    bool? isAndroidHost,
   })  : _yieldFrame = yieldFrame ?? _endOfFrame,
+        _isAndroidHost = isAndroidHost ?? (!kIsWeb && Platform.isAndroid),
         _beginPlaybackActivity =
-            beginPlaybackActivity ?? MacOSPlaybackActivity.start,
+            beginPlaybackActivity ?? PlaybackActivity.start,
         _endPlaybackActivity =
-            endPlaybackActivity ?? MacOSPlaybackActivity.stop;
+            endPlaybackActivity ?? PlaybackActivity.stop,
+        usbDacService = UsbDacService(_player);
 
   final OfflinePlayer _player;
   final Future<void> Function() _yieldFrame;
+
+  final UsbDacService usbDacService;
+
+  /// True on Android, where output always goes through the system mixer and
+  /// is therefore never reported as bit-perfect. Injectable for tests.
+  final bool _isAndroidHost;
 
   /// Called after every accepted volume change (used to persist it).
   final void Function(double volume)? onVolumeChanged;
@@ -35,7 +49,16 @@ class PlayerController {
   /// the host when the playing/not-playing state actually flips.
   bool _playbackActivityHeld = false;
 
-  static Future<void> _endOfFrame() => SchedulerBinding.instance.endOfFrame;
+  static Future<void> _endOfFrame() {
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) {
+      return Future.value();
+    }
+    return Future.any([
+      SchedulerBinding.instance.endOfFrame,
+      Future.delayed(const Duration(milliseconds: 50)),
+    ]);
+  }
 
   final ValueNotifier<int?> _pendingTrackId = ValueNotifier<int?>(null);
 
@@ -67,6 +90,10 @@ class PlayerController {
 
     try {
       final result = action();
+      try {
+        _player.setBitPerfectMode(_bitPerfectMode);
+        _player.setHardwareVolume(_hardwareVolume);
+      } catch (_) {}
       if (!(notifyUnlessFalse && result == false)) _commandIssued();
     } finally {
       if (announced) _pendingTrackId.value = null;
@@ -158,17 +185,89 @@ class PlayerController {
   /// volume slider in sync with keyboard-driven changes without polling.
   ValueListenable<double> get volumeListenable => _volumeNotifier;
 
-  /// Releases the volume notifier. Call when the controller is torn down.
+  double _hardwareVolume = 0.36;
+  final ValueNotifier<double> _hardwareVolumeNotifier = ValueNotifier<double>(0.36);
+  ValueListenable<double> get hardwareVolumeListenable => _hardwareVolumeNotifier;
+  double get hardwareVolume => _hardwareVolume;
+
+  bool _bitPerfectMode = false;
+  final ValueNotifier<bool> _bitPerfectModeNotifier = ValueNotifier<bool>(false);
+  ValueListenable<bool> get bitPerfectModeListenable => _bitPerfectModeNotifier;
+  bool get isBitPerfectMode => _bitPerfectMode;
+
+  bool _volumeNormalization = false;
+  final ValueNotifier<bool> _volumeNormalizationNotifier = ValueNotifier<bool>(false);
+  ValueListenable<bool> get volumeNormalizationListenable => _volumeNormalizationNotifier;
+  bool get volumeNormalization => _volumeNormalization;
+
+  final ValueNotifier<int> _volumePanelTrigger = ValueNotifier<int>(0);
+  ValueListenable<int> get volumePanelTrigger => _volumePanelTrigger;
+
+  void showVolumePanel() {
+    _volumePanelTrigger.value++;
+  }
+
+  void stepVolume(double delta) {
+    if (isUsbDacActive && isBitPerfectMode) {
+      setHardwareVolume(_hardwareVolume + delta);
+    } else {
+      setVolume(_volume + delta);
+    }
+  }
+
+  double get trackGainDb {
+    try {
+      return _player.getTrackGainDb();
+    } catch (_) {
+      return 0.0;
+    }
+  }
+  bool get isUsbDacActive {
+    try {
+      return _player.signalPath.outputApi == 'Direct UAC2';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Releases the volume and mode notifiers. Call when the controller is torn down.
   void dispose() {
     if (_playbackActivityHeld) {
       _playbackActivityHeld = false;
       unawaited(_endPlaybackActivity());
     }
     _volumeNotifier.dispose();
+    _hardwareVolumeNotifier.dispose();
+    _bitPerfectModeNotifier.dispose();
+    _volumeNormalizationNotifier.dispose();
+    _volumePanelTrigger.dispose();
+  }
+
+  static const double _normalizationHeadroom = 0.84;
+
+  void _applySoftwareVolume() {
+    final isBypassed = isUsbDacActive && _bitPerfectMode;
+    final effective = isBypassed
+        ? 1.0
+        : (_volumeNormalization
+            ? (_volume * _normalizationHeadroom).clamp(0.0, 1.0)
+            : _volume);
+    try {
+      _player.setSoftwareVolume(effective);
+    } catch (_) {
+      try {
+        _player.setVolume(effective);
+      } catch (_) {}
+    }
   }
 
   void load(int trackId) {
     _player.loadTrack(trackId);
+    try {
+      _player.setBitPerfectMode(_bitPerfectMode);
+      _player.setHardwareVolume(_hardwareVolume);
+      _applySoftwareVolume();
+    } catch (_) {}
     _commandIssued();
   }
 
@@ -194,12 +293,51 @@ class PlayerController {
 
   double get volume => _volume;
 
-  void setVolume(double volume) {
+  void setVolume(double volume, {bool triggerPanel = true}) {
     final next = volume.clamp(0.0, 1.0);
     _player.setVolume(next);
     _volume = next;
     _volumeNotifier.value = next;
+    _applySoftwareVolume();
+    if (triggerPanel) {
+      _volumePanelTrigger.value++;
+    }
     onVolumeChanged?.call(next);
+  }
+
+  void setVolumeNormalization(bool enabled) {
+    if (_volumeNormalization == enabled) return;
+    _volumeNormalization = enabled;
+    _volumeNormalizationNotifier.value = enabled;
+    try {
+      _player.setVolumeNormalization(enabled);
+    } catch (_) {}
+    PlaybackSettings.saveVolumeNormalization(enabled);
+    _applySoftwareVolume();
+  }
+
+  void setHardwareVolume(double volume, {bool triggerPanel = true}) {
+    final next = volume.clamp(0.0, 1.0);
+    _player.setHardwareVolume(next);
+    _hardwareVolume = next;
+    _hardwareVolumeNotifier.value = next;
+    if (triggerPanel) {
+      _volumePanelTrigger.value++;
+    }
+  }
+  void setBitPerfectMode(bool enabled) {
+    _player.setBitPerfectMode(enabled);
+    _bitPerfectMode = enabled;
+    _bitPerfectModeNotifier.value = enabled;
+    PlaybackSettings.saveBitPerfectMode(enabled);
+    // Audio safety: re-assert hardware volume and avoid setting volume to 100% full scale.
+    _player.setHardwareVolume(_hardwareVolume);
+    _applySoftwareVolume();
+  }
+
+  void switchOutputRoute() {
+    _player.switchOutputRoute();
+    _commandIssued();
   }
 
   void setEqualizerGains(List<double> gainsDb) {
@@ -283,6 +421,13 @@ class PlayerController {
   }
 
   Future<void> previous() {
+    try {
+      if (currentSeconds > 3.0) {
+        seekToFrame(0);
+        return Future.value();
+      }
+    } catch (_) {}
+
     int? target;
     try {
       final index = queueCurrentIndex;
@@ -435,19 +580,73 @@ class PlayerController {
     // loaded (effective rate 0).
     final engineRate = _player.effectiveOutputRate;
     if (engineRate > 0) {
+      bool isUsbDac = false;
+      try {
+        isUsbDac = _player.signalPath.outputApi == 'Direct UAC2';
+      } catch (_) {}
+      final native = engineRate == sourceRate && (!_isAndroidHost || isUsbDac);
       return AudioOutputDecision(
         sourceRate: sourceRate,
         requestedRate: engineRate,
         effectiveRate: engineRate,
-        status: engineRate == sourceRate
+        status: native
             ? AudioPlaybackStatus.native
             : AudioPlaybackStatus.resample,
+      );
+    }
+
+    if (_isAndroidHost) {
+      return AudioOutputDecision(
+        sourceRate: sourceRate,
+        requestedRate: sourceRate,
+        effectiveRate: sourceRate,
+        status: AudioPlaybackStatus.resample,
       );
     }
 
     return _audioOutputPolicy.resolve(
       sourceRate: sourceRate,
       mode: _audioOutputMode,
+    );
+  }
+
+  /// Live signal path for the Signal path UI, or null when nothing is loaded
+  /// or the engine cannot report it. On Android AAudio output route / device name
+  /// comes from the host (AAudio cannot name the device), and bitPerfect is
+  /// forced false for AAudio (honesty rule). When outputApi is 'Direct UAC2',
+  /// the hardware stream bypasses AudioFlinger and bitPerfect is preserved.
+  Future<SignalPath?> readSignalPath() async {
+    final SignalPath engine;
+    try {
+      engine = _player.signalPath;
+    } catch (_) {
+      return null;
+    }
+    if (!_isAndroidHost) return engine;
+
+    final isUsbDac = engine.outputApi == 'Direct UAC2';
+    final host = await AudioRoute.current(isAndroid: true);
+    return SignalPath(
+      sourceFormat: engine.sourceFormat,
+      sourceSampleRate: engine.sourceSampleRate,
+      sourceBitsPerSample: engine.sourceBitsPerSample,
+      sourceChannels: engine.sourceChannels,
+      lossless: engine.lossless,
+      outputSampleRate: engine.outputSampleRate,
+      outputChannels: engine.outputChannels,
+      outputBitsPerSample: engine.outputBitsPerSample,
+      outputIsFloat: engine.outputIsFloat,
+      resampling: engine.resampling,
+      equalizerActive: engine.equalizerActive,
+      equalizerBands: engine.equalizerBands,
+      volume: engine.volume,
+      bitPerfect: isUsbDac ? engine.bitPerfect : false,
+      bufferMs: engine.bufferMs,
+      underrunSamples: engine.underrunSamples,
+      callbackCount: engine.callbackCount,
+      outputApi: engine.outputApi,
+      route: isUsbDac ? OutputRoute.usb : (host?.route ?? engine.route),
+      deviceName: isUsbDac ? engine.deviceName : ((host?.name.isNotEmpty ?? false) ? host!.name : engine.deviceName),
     );
   }
 

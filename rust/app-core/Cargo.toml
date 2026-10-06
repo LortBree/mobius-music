@@ -11,6 +11,11 @@ offline-player-metadata = { path = "../metadata" }
 thiserror = "2"
 rusqlite = "0.38.0"
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "android"))'.dependencies]
 offline-player-decoder = { path = "../decoder" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 offline-player-platform-macos = { path = "../platform-macos" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+offline-player-platform-android = { path = "../platform-android" }

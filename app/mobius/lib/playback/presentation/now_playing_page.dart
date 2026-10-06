@@ -8,22 +8,42 @@ import '../../../core/keyboard/text_input_focus.dart';
 import '../../../playback/audio_output_policy.dart';
 import '../../../playback/player_controller.dart';
 import '../../app/theme/colors.dart';
+import '../../app/player_shell_state.dart' show kMobileBreakpoint;
 import '../../features/library/data/ffi_library_repository.dart';
+import '../../features/sound/presentation/sound_page.dart';
 import '../playback_time_format.dart';
+import '../../features/library/data/user_collections.dart';
 import '../playback_poller.dart';
 import 'queue_panel.dart';
+import 'shareable_music_card.dart';
+import 'signal_path_view.dart';
 
 class NowPlayingPage extends StatefulWidget {
   const NowPlayingPage({
     super.key,
     required this.repository,
     required this.playerController,
+    this.collections,
     this.initialOpenQueue = false,
+    this.isFavorite = false,
+    this.onToggleFavorite,
+    this.onAddToPlaylist,
   });
 
   final FfiLibraryRepository repository;
   final PlayerController playerController;
+  final UserCollections? collections;
   final bool initialOpenQueue;
+
+  /// Whether the current track is a favorite. The shell owns favorites, so it
+  /// passes the value in (and the toggle below out). Null callback => the
+  /// heart renders disabled (desktop, which has its own controls elsewhere).
+  final bool isFavorite;
+  final FutureOr<void> Function()? onToggleFavorite;
+
+  /// Opens the shell's add-to-playlist flow for the current track. Null =>
+  /// the mobile Playlist action is disabled.
+  final VoidCallback? onAddToPlaylist;
 
   @override
   State<NowPlayingPage> createState() => _NowPlayingPageState();
@@ -37,10 +57,12 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
 
   TrackMetadata? _track;
   ImageProvider? _artworkImage;
+  Uint8List? _artworkBytes;
   TrackTechnicalInfo? _technicalInfo;
   AudioOutputDecision? _audioOutputDecision;
 
   int _currentTrackId = 0;
+  bool _isFavorite = false;
 
   // Position changes every poll tick; keep it out of
   // setState so only the seek bar and time label rebuild.
@@ -54,6 +76,18 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
 
   OfflinePlayerRepeatMode _repeatMode = OfflinePlayerRepeatMode.off;
 
+  /// Latest resolved signal path for the inline strip. Kept in a notifier so
+  /// the ~1 s refresh only rebuilds the strip, not the whole page. Null when
+  /// nothing is loaded or the engine cannot report it (the engine side of the
+  /// signal path is implemented in parallel and currently returns null — the
+  /// strip handles that by rendering "Nothing playing").
+  final ValueNotifier<SignalPath?> _signalPath = ValueNotifier<SignalPath?>(
+    null,
+  );
+
+  /// Guards against overlapping async signal-path reads piling up.
+  bool _signalPathInFlight = false;
+
   bool _isSeeking = false;
 
   bool _queueOpen = false;
@@ -66,13 +100,18 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   void initState() {
     super.initState();
 
+    _isFavorite = widget.isFavorite;
     _syncPlayer();
+    if (_currentTrackId > 0) {
+      _loadFavoriteStatus(_currentTrackId);
+    }
 
     widget.playerController.commands.addListener(_onPlayerCommand);
     widget.playerController.pendingTrackId.addListener(_onPendingTrack);
     _poller.start();
 
     _queueOpen = widget.initialOpenQueue;
+    _refreshSignalPath();
   }
 
   @override
@@ -81,7 +120,24 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     widget.playerController.pendingTrackId.removeListener(_onPendingTrack);
     _poller.stop();
     _positionNotifier.dispose();
+    _signalPath.dispose();
     super.dispose();
+  }
+
+  /// Resolves the live signal path off the build path. Serialised through
+  /// [_signalPathInFlight] so a slow read never stacks up behind the ~1 s
+  /// poll cadence. Errors collapse to null (strip shows "Nothing playing").
+  Future<void> _refreshSignalPath() async {
+    if (_signalPathInFlight) return;
+    _signalPathInFlight = true;
+    try {
+      final path = await widget.playerController.readSignalPath();
+      if (mounted) _signalPath.value = path;
+    } catch (_) {
+      if (mounted) _signalPath.value = null;
+    } finally {
+      _signalPathInFlight = false;
+    }
   }
 
   /// Paint the upcoming track before the native load blocks the UI thread.
@@ -99,6 +155,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       _track = track;
       _loadArtworkForTrack(trackId);
     });
+    _loadFavoriteStatus(trackId);
   }
 
   void _onPlayerCommand() {
@@ -117,11 +174,13 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     }
 
     _syncPlayer();
+    _refreshSignalPath();
   }
 
   void _loadArtworkForTrack(int trackId) {
     if (trackId <= 0) {
       _artworkImage = null;
+      _artworkBytes = null;
       return;
     }
 
@@ -130,9 +189,11 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
 
       if (artwork == null || artwork.data.isEmpty) {
         _artworkImage = null;
+        _artworkBytes = null;
         return;
       }
 
+      _artworkBytes = artwork.data;
       _artworkImage = ResizeImage(
         MemoryImage(artwork.data),
         width: 960,
@@ -140,7 +201,43 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       );
     } catch (_) {
       _artworkImage = null;
+      _artworkBytes = null;
     }
+  }
+
+  void _loadFavoriteStatus(int trackId) {
+    if (trackId <= 0) {
+      if (mounted) setState(() => _isFavorite = false);
+      return;
+    }
+    widget.collections?.favorites().then((favs) {
+      if (mounted && _currentTrackId == trackId) {
+        setState(() => _isFavorite = favs.contains(trackId));
+      }
+    });
+  }
+
+  Future<void> _toggleFavorite() async {
+    final trackId = _currentTrackId;
+    if (trackId <= 0) return;
+
+    setState(() {
+      _isFavorite = !_isFavorite;
+    });
+
+    try {
+      if (widget.onToggleFavorite != null) {
+        await widget.onToggleFavorite!();
+      } else if (widget.collections != null) {
+        await widget.collections!.toggleFavorite(trackId);
+      }
+      if (widget.collections != null) {
+        final favs = await widget.collections!.favorites();
+        if (mounted && _currentTrackId == trackId) {
+          setState(() => _isFavorite = favs.contains(trackId));
+        }
+      }
+    } catch (_) {}
   }
 
   void _syncPlayer() {
@@ -163,6 +260,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
 
       if (currentTrackId != _currentTrackId) {
         _loadArtworkForTrack(currentTrackId);
+        _loadFavoriteStatus(currentTrackId);
 
         if (currentTrackId > 0) {
           try {
@@ -314,9 +412,18 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       return;
     }
 
+    if (value >= duration - 0.5) {
+      setState(() {
+        _isSeeking = false;
+      });
+      widget.playerController.next();
+      return;
+    }
+
     final ratio = (value / duration).clamp(0.0, 1.0);
 
-    final frame = (ratio * totalFrames).round().clamp(0, totalFrames);
+    final maxSafeFrame = totalFrames > 22050 ? totalFrames - 22050 : totalFrames;
+    final frame = (ratio * totalFrames).round().clamp(0, maxSafeFrame);
 
     try {
       widget.playerController.seekToFrame(frame);
@@ -459,6 +566,14 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (isMobile) {
+      return _buildMobileScaffold(context);
+    }
+    return _buildDesktopScaffold(context);
+  }
+
+  Widget _buildDesktopScaffold(BuildContext context) {
     final track = _track;
     final technicalInfo = _technicalInfo;
     final audioOutputDecision = _audioOutputDecision;
@@ -473,6 +588,11 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
         elevation: 0,
         title: const Text('Now Playing'),
         actions: [
+          IconButton(
+            tooltip: 'Share music card',
+            icon: const Icon(Icons.share_rounded),
+            onPressed: _openShareCard,
+          ),
           IconButton(
             tooltip: _queueOpen ? 'Hide queue' : 'Show queue',
             onPressed: _toggleQueue,
@@ -754,7 +874,354 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       ),
     );
   }
+
+  // -----------------------------------------------------------------------
+  // Mobile layout (Spotify-mobile style). Reuses the same state, poller,
+  // seek logic and audio-output decision as the desktop layout.
+  // -----------------------------------------------------------------------
+
+  Widget _buildMobileScaffold(BuildContext context) {
+    final track = _track;
+    final maxValue = _duration > 0 ? _duration : 1.0;
+    final hasQueue = widget.playerController.queueLength > 0;
+
+    return Scaffold(
+      backgroundColor: MobiusColors.backgroundOf(context),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        foregroundColor: MobiusColors.textOf(context),
+        elevation: 0,
+        // Android Back already pops this pushed route; the chevron is the
+        // explicit affordance.
+        leading: IconButton(
+          tooltip: 'Close',
+          icon: const Icon(Icons.keyboard_arrow_down_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        title: const Text('Now Playing'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Share music card',
+            icon: const Icon(Icons.share_rounded),
+            onPressed: _openShareCard,
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final size = constraints.maxWidth.clamp(0.0, 360.0);
+                    return _Artwork(size: size, image: _artworkImage);
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 28),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          track?.title.isNotEmpty == true
+                              ? track!.title
+                              : 'Nothing playing',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: MobiusColors.textOf(context),
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          track?.artist.isNotEmpty == true
+                              ? track!.artist
+                              : 'Unknown artist',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: MobiusColors.textDimOf(context),
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  IconButton(
+                    tooltip: _isFavorite
+                        ? 'Remove from Favorites'
+                        : 'Add to Favorites',
+                    icon: Icon(
+                      _isFavorite
+                          ? Icons.favorite_rounded
+                          : Icons.favorite_border_rounded,
+                    ),
+                    color: _isFavorite
+                        ? MobiusColors.accentLightOf(context)
+                        : MobiusColors.textDimOf(context),
+                    onPressed: _toggleFavorite,
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+              ValueListenableBuilder<SignalPath?>(
+                valueListenable: _signalPath,
+                builder: (context, path, _) => SignalPathStrip(
+                  path: path,
+                  onTap: () => _openSignalPathSheet(),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              ValueListenableBuilder<double>(
+                valueListenable: _positionNotifier,
+                builder: (context, position, _) => _SeekBar(
+                  value: position.clamp(0.0, maxValue),
+                  duration: _duration,
+                  enabled: _duration > 0 && _totalFrames > 0,
+                  onChanged: _onSeekChanged,
+                  onChangeEnd: _onSeekEnd,
+                  formatTime: _formatTime,
+                  glowThumb: true,
+                ),
+              ),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  ValueListenableBuilder<double>(
+                    valueListenable: _positionNotifier,
+                    builder: (context, position, _) => Text(
+                      _formatTime(position),
+                      style: TextStyle(
+                        color: MobiusColors.textDimOf(context),
+                        fontSize: 12,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                  Text(
+                    _formatTime(_duration),
+                    style: TextStyle(
+                      color: MobiusColors.textDimOf(context),
+                      fontSize: 12,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 20),
+
+              // Control row: shuffle · previous · play/pause · next · loop.
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  IconButton(
+                    tooltip: 'Shuffle',
+                    iconSize: 24,
+                    color: MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.shuffle_rounded),
+                    onPressed: null,
+                  ),
+                  IconButton(
+                    tooltip: 'Previous',
+                    iconSize: 32,
+                    color: hasQueue
+                        ? MobiusColors.textOf(context)
+                        : MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.skip_previous_rounded),
+                    onPressed: hasQueue ? _previous : null,
+                  ),
+                  SizedBox(
+                    width: 66,
+                    height: 66,
+                    child: IconButton(
+                      tooltip: _state == OfflinePlayerState.playing
+                          ? 'Pause'
+                          : 'Play',
+                      iconSize: 38,
+                      color: MobiusColors.onAccentOf(context),
+                      style: IconButton.styleFrom(
+                        backgroundColor: MobiusColors.accentOf(context),
+                        elevation: 0,
+                        shadowColor: Colors.transparent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                      ),
+                      icon: Icon(
+                        _state == OfflinePlayerState.playing
+                            ? Icons.pause_rounded
+                            : Icons.play_arrow_rounded,
+                      ),
+                      onPressed: _togglePlayback,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Next',
+                    iconSize: 32,
+                    color: hasQueue
+                        ? MobiusColors.textOf(context)
+                        : MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.skip_next_rounded),
+                    onPressed: hasQueue ? _next : null,
+                  ),
+                  IconButton(
+                    tooltip: _repeatLabel(),
+                    iconSize: 24,
+                    color: _repeatMode == OfflinePlayerRepeatMode.off
+                        ? MobiusColors.textDimOf(context)
+                        : MobiusColors.accentLightOf(context),
+                    icon: Icon(_repeatIcon()),
+                    onPressed: _cycleRepeatMode,
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+
+              // Bottom row: queue · sound · playlist · share.
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    tooltip: 'Queue',
+                    iconSize: 20,
+                    color: MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.queue_music_rounded),
+                    onPressed: _openQueueSheet,
+                  ),
+                  IconButton(
+                    tooltip: 'Sound',
+                    iconSize: 20,
+                    color: MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.graphic_eq_rounded),
+                    onPressed: _openSound,
+                  ),
+                  IconButton(
+                    tooltip: 'Add to playlist',
+                    iconSize: 20,
+                    color: MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.playlist_add_rounded),
+                    onPressed: widget.onAddToPlaylist,
+                  ),
+                  IconButton(
+                    tooltip: 'Share music card',
+                    iconSize: 20,
+                    color: MobiusColors.textDimOf(context),
+                    icon: const Icon(Icons.share_rounded),
+                    onPressed: _openShareCard,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openShareCard() async {
+    final track = _track;
+    if (track == null) return;
+
+    SignalPath? path = _signalPath.value;
+    try {
+      path = await widget.playerController.readSignalPath();
+      if (mounted) _signalPath.value = path;
+    } catch (_) {}
+
+    if (!mounted) return;
+    await showShareableMusicCardModal(
+      context: context,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      artworkBytes: _artworkBytes,
+      signalPath: path,
+    );
+  }
+
+  /// Opens the signal-path detail sheet with a FRESH read, so the sheet shows
+  /// the state at tap time even between poll ticks.
+  Future<void> _openSignalPathSheet() async {
+    SignalPath? path = _signalPath.value;
+    try {
+      path = await widget.playerController.readSignalPath();
+      if (mounted) _signalPath.value = path;
+    } catch (_) {
+      path = null;
+    }
+    if (!mounted) return;
+    await showSignalPathSheet(context, path: path, controller: widget.playerController);
+  }
+
+  /// Pushes the Sound page (output / volume / equalizer) as its own route,
+  /// matching how the mobile Settings page reaches it.
+  void _openSound() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: MobiusColors.backgroundOf(context),
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            foregroundColor: MobiusColors.textOf(context),
+            elevation: 0,
+            title: const Text('Sound'),
+          ),
+          body: SafeArea(
+            child: SoundPage(playerController: widget.playerController),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Presents the same [QueuePanel] content as the desktop side panel, but as
+  /// a draggable bottom sheet on mobile.
+  Future<void> _openQueueSheet() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: MobiusColors.backgroundOf(context),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          minChildSize: 0.3,
+          maxChildSize: 0.92,
+          builder: (context, scrollController) {
+            return QueuePanel(
+              repository: widget.repository,
+              playerController: widget.playerController,
+              onTrackSelected: _syncPlayer,
+              onClose: () => Navigator.of(sheetContext).maybePop(),
+            );
+          },
+        );
+      },
+    );
+  }
 }
+
 
 class _SeekBar extends StatefulWidget {
   const _SeekBar({
@@ -764,6 +1231,7 @@ class _SeekBar extends StatefulWidget {
     required this.onChanged,
     required this.onChangeEnd,
     required this.formatTime,
+    this.glowThumb = false,
   });
 
   final double value;
@@ -773,6 +1241,10 @@ class _SeekBar extends StatefulWidget {
   final ValueChanged<double> onChangeEnd;
   final String Function(double) formatTime;
 
+  /// Mobile: a thinner track with a white glowing thumb. Desktop leaves this
+  /// false, keeping its existing accent thumb.
+  final bool glowThumb;
+
   @override
   State<_SeekBar> createState() => _SeekBarState();
 }
@@ -780,6 +1252,15 @@ class _SeekBar extends StatefulWidget {
 class _SeekBarState extends State<_SeekBar> {
   double? _hoverValue;
   bool _dragging = false;
+
+  @override
+  void didUpdateWidget(covariant _SeekBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.duration != widget.duration || !widget.enabled) {
+      _hoverValue = null;
+      _dragging = false;
+    }
+  }
 
   double _valueFromPosition(double x, double width) {
     if (widget.duration <= 0 || width <= 0) {
@@ -840,16 +1321,20 @@ class _SeekBarState extends State<_SeekBar> {
                   alignment: Alignment.bottomCenter,
                   child: SliderTheme(
                     data: SliderTheme.of(context).copyWith(
-                      trackHeight: 4,
-                      thumbShape: const RoundSliderThumbShape(
-                        enabledThumbRadius: 6,
+                      trackHeight: widget.glowThumb ? 2.5 : 4,
+                      thumbShape: RoundSliderThumbShape(
+                        enabledThumbRadius: widget.glowThumb ? 5 : 6,
+                        elevation: 0,
+                        pressedElevation: 0,
                       ),
                       overlayShape: const RoundSliderOverlayShape(
                         overlayRadius: 14,
                       ),
                       activeTrackColor: MobiusColors.accentOf(context),
                       inactiveTrackColor: MobiusColors.borderOf(context),
-                      thumbColor: MobiusColors.accentLightOf(context),
+                      thumbColor: widget.glowThumb
+                          ? Colors.white
+                          : MobiusColors.accentLightOf(context),
                       overlayColor: MobiusColors.accentOf(
                         context,
                       ).withValues(alpha: 0.2),
@@ -876,7 +1361,7 @@ class _SeekBarState extends State<_SeekBar> {
                               if (mounted) {
                                 setState(() {
                                   _dragging = false;
-                                  _hoverValue = value;
+                                  _hoverValue = null;
                                 });
                               }
                             }

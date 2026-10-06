@@ -1,0 +1,93 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android (arm64-v8a)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android NDK 27.0.12077973
+        run: |
+          echo "y" | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.0.12077973"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache cargo-ndk
+        uses: actions/cache@v4
+        id: cache-cargo-ndk
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-${{ runner.os }}-v1
+
+      - name: Install cargo-ndk
+        if: steps.cache-cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install cargo-ndk
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+          cache-key: flutter-${{ runner.os }}-${{ hashFiles('app/mobius/pubspec.lock') }}
+
+      - name: Resolve Flutter packages
+        working-directory: app/mobius
+        run: flutter pub get
+
+      - name: Build Flutter Android release APK
+        working-directory: app/mobius
+        run: flutter build apk --release
+
+      - name: Package APK
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk_path="app/mobius/build/app/outputs/flutter-apk/app-release.apk"
+          test -f "${apk_path}"
+          tag_name="${REF_NAME}"
+          if [[ -z "${tag_name}" || "${tag_name}" == "main" ]]; then
+            tag_name="${GITHUB_SHA::7}"
+          fi
+          dest_name="Mobius-${tag_name}-android-arm64.apk"
+          cp "${apk_path}" "dist/${dest_name}"
+          echo "PACKAGED_APK=dist/${dest_name}" >> $GITHUB_ENV
+          echo "Created package: dist/${dest_name}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mobius-${{ github.ref_name }}-android-arm64
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Mobius ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: dist/*.apk

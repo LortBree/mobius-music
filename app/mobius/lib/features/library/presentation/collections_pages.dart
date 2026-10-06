@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 import '../../../app/theme/colors.dart';
 import '../../../core/cache/lru_cache.dart';
 import '../../../core/ffi/offline_player.dart';
@@ -32,10 +33,10 @@ class PlaylistsPage extends StatefulWidget {
   final int collectionsVersion;
 
   @override
-  State<PlaylistsPage> createState() => _PlaylistsPageState();
+  State<PlaylistsPage> createState() => PlaylistsPageState();
 }
 
-class _PlaylistsPageState extends State<PlaylistsPage> {
+class PlaylistsPageState extends State<PlaylistsPage> {
   Map<String, List<int>> _playlists = {};
   Map<String, Uint8List> _covers = {};
   Set<int> _favoriteTrackIds = {};
@@ -44,6 +45,16 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
   String? _editingName;
   String? _selectedPlaylistName;
   final TextEditingController _nameController = TextEditingController();
+
+  /// Returns true if back navigation was consumed (closing playlist detail).
+  bool handleBack() {
+    if (_selectedPlaylistName != null) {
+      setState(() => _selectedPlaylistName = null);
+      _reload();
+      return true;
+    }
+    return false;
+  }
 
   @override
   void initState() {
@@ -188,14 +199,32 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
       }
     }
 
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 16 : 32,
+        isMobile ? 8 : 12,
+        isMobile ? 16 : 36,
+        isMobile ? 90 : 24,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Expanded(child: _CollectionHeading(title: 'Playlists')),
+              if (!isMobile)
+                const Expanded(child: _CollectionHeading(title: 'Playlists'))
+              else
+                Expanded(
+                  child: Text(
+                    '${_playlists.length} ${_playlists.length == 1 ? 'playlist' : 'playlists'}',
+                    style: TextStyle(
+                      color: MobiusColors.textDimOf(context),
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
               FilledButton.icon(
                 onPressed: () => setState(() {
                   _creating = true;
@@ -207,11 +236,13 @@ class _PlaylistsPageState extends State<PlaylistsPage> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            '${_playlists.length} ${_playlists.length == 1 ? 'playlist' : 'playlists'}',
-            style: TextStyle(color: MobiusColors.textDimOf(context)),
-          ),
+          if (!isMobile) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${_playlists.length} ${_playlists.length == 1 ? 'playlist' : 'playlists'}',
+              style: TextStyle(color: MobiusColors.textDimOf(context)),
+            ),
+          ],
           if (_creating) ...[
             const SizedBox(height: 16),
             Material(
@@ -435,12 +466,8 @@ class _FavoritesPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [MobiusColors.heroGradientTop, MobiusColors.heroGradientBottom],
-      ),
+    decoration: BoxDecoration(
+      color: MobiusColors.panelOf(context),
     ),
     child: Center(
       child: LayoutBuilder(
@@ -451,8 +478,8 @@ class _FavoritesPlaceholder extends StatelessWidget {
             children: [
               Icon(
                 Icons.favorite_rounded,
-                color: MobiusColors.accentOf(context),
-                size: size * 0.34,
+                color: MobiusColors.accentLightOf(context),
+                size: size * 0.38,
               ),
             ],
           );
@@ -593,7 +620,9 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final currentTrackId = _safeCurrentTrackId;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -605,7 +634,12 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
           isFavorites: widget.isFavorites,
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(32, 16, 36, 4),
+          padding: EdgeInsets.fromLTRB(
+            isMobile ? 16 : 32,
+            isMobile ? 12 : 16,
+            isMobile ? 16 : 36,
+            4,
+          ),
           child: Row(
             children: [
               FilledButton.icon(
@@ -629,14 +663,16 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(32, 18, 32, 12),
-          child: _PlaylistTableHeader(),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Divider(height: 1, color: MobiusColors.borderOf(context)),
-        ),
+        if (!isMobile) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(32, 18, 32, 12),
+            child: _PlaylistTableHeader(),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Divider(height: 1, color: MobiusColors.borderOf(context)),
+          ),
+        ],
         if (_tracks.isEmpty)
           Expanded(
             child: Center(
@@ -651,7 +687,12 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
         else
           Expanded(
             child: ReorderableListView.builder(
-              padding: const EdgeInsets.fromLTRB(20, 6, 20, 24),
+              padding: EdgeInsets.fromLTRB(
+                isMobile ? 8 : 20,
+                6,
+                isMobile ? 8 : 20,
+                isMobile ? 90 : 24,
+              ),
               itemCount: _tracks.length,
               onReorder: _reorder,
               buildDefaultDragHandles: false,
@@ -661,6 +702,7 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
                 return TrackContextMenu(
                   key: ValueKey('context-${track.trackId}'),
                   track: track,
+                  repository: widget.repository,
                   collections: widget.collections,
                   playerController: widget.playerController,
                   removeLabel: widget.isFavorites
@@ -684,6 +726,27 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
                     duration: _currentDuration(isCurrent),
                     sampleRate: _currentSampleRate(isCurrent),
                     onPlay: () => _play(index),
+                    onMore: () {
+                      TrackContextMenu.showForTrack(
+                        context: context,
+                        position: Offset.zero,
+                        track: track,
+                        repository: widget.repository,
+                        collections: widget.collections,
+                        playerController: widget.playerController,
+                        removeLabel: widget.isFavorites
+                            ? 'Remove from Favorites'
+                            : 'Remove from playlist',
+                        onRemove: () => _remove(track),
+                        onChanged: widget.onChanged,
+                        onGoToArtist: trackArtistName(track).isEmpty
+                            ? null
+                            : () => widget.onGoToArtist(trackArtistName(track)),
+                        onGoToAlbum: track.album.trim().isEmpty
+                            ? null
+                            : () => widget.onGoToAlbum(track),
+                      );
+                    },
                   ),
                 );
               },
@@ -710,81 +773,122 @@ class _PlaylistHero extends StatelessWidget {
   final bool isFavorites;
 
   @override
-  Widget build(BuildContext context) => Container(
-    height: 286,
-    padding: const EdgeInsets.fromLTRB(32, 20, 36, 26),
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          MobiusColors.heroCoverTop,
-          MobiusColors.heroCoverMid,
-          MobiusColors.heroCoverFade,
-        ],
-        stops: [0, 0.62, 1],
-      ),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+  Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+
+    if (isMobile) {
+      return Container(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            IconButton(
-              tooltip: 'Back to playlists',
-              onPressed: onBack,
-              icon: const Icon(Icons.arrow_back_rounded),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              isFavorites ? 'SAVED MUSIC' : 'PLAYLIST',
-              style: TextStyle(
-                color: MobiusColors.onHeroLabel,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.4,
+            _PlaylistCover(cover: cover, size: 110, isFavorites: isFavorites),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isFavorites ? 'SAVED MUSIC' : 'PLAYLIST',
+                    style: TextStyle(
+                      color: MobiusColors.accentLightOf(context),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: MobiusColors.textOf(context),
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '$trackCount ${trackCount == 1 ? 'song' : 'songs'}',
+                    style: TextStyle(
+                      color: MobiusColors.textDimOf(context),
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
-        const Spacer(),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            _PlaylistCover(cover: cover, size: 184, isFavorites: isFavorites),
-            const SizedBox(width: 24),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: MobiusColors.onHeroPrimary,
-                        fontSize: 44,
-                        height: 1.05,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      'Mobius  •  $trackCount ${trackCount == 1 ? 'song' : 'songs'}',
-                      style: const TextStyle(color: MobiusColors.onHeroMuted),
-                    ),
-                  ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(32, 20, 36, 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Back to playlists',
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back_rounded),
+                color: MobiusColors.textOf(context),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                isFavorites ? 'SAVED MUSIC' : 'PLAYLIST',
+                style: TextStyle(
+                  color: MobiusColors.accentLightOf(context),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.4,
                 ),
               ),
-            ),
-          ],
-        ),
-      ],
-    ),
-  );
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _PlaylistCover(cover: cover, size: 184, isFavorites: isFavorites),
+              const SizedBox(width: 24),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: MobiusColors.textOf(context),
+                          fontSize: 44,
+                          height: 1.05,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        'Mobius  •  $trackCount ${trackCount == 1 ? 'song' : 'songs'}',
+                        style: TextStyle(color: MobiusColors.textDimOf(context)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _PlaylistCover extends StatelessWidget {
@@ -803,32 +907,27 @@ class _PlaylistCover extends StatelessWidget {
     width: size,
     height: size,
     decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(8),
-      boxShadow: const [
-        BoxShadow(color: Colors.black38, blurRadius: 24, offset: Offset(0, 10)),
+      color: MobiusColors.panelOf(context),
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.35),
+          blurRadius: 12,
+          offset: const Offset(0, 6),
+        ),
       ],
     ),
     clipBehavior: Clip.antiAlias,
     child: cover == null
-        ? isFavorites
-              ? const _FavoritesPlaceholder()
-              : const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        MobiusColors.favoritesGradientTop,
-                        MobiusColors.favoritesGradientBottom,
-                      ],
-                    ),
-                  ),
-                  child: Icon(
-                    Icons.queue_music_rounded,
-                    color: Colors.white,
-                    size: 68,
-                  ),
-                )
+        ? (isFavorites
+            ? const _FavoritesPlaceholder()
+            : Center(
+                child: Icon(
+                  Icons.queue_music_rounded,
+                  color: MobiusColors.textDimOf(context),
+                  size: size * 0.45,
+                ),
+              ))
         : Image.memory(cover!, fit: BoxFit.cover),
   );
 }
@@ -878,6 +977,7 @@ class _PlaylistTrackRow extends StatelessWidget {
     required this.duration,
     required this.sampleRate,
     required this.onPlay,
+    this.onMore,
   });
 
   final int index;
@@ -888,9 +988,109 @@ class _PlaylistTrackRow extends StatelessWidget {
   final double? duration;
   final int? sampleRate;
   final VoidCallback onPlay;
+  final VoidCallback? onMore;
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (isMobile) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Material(
+          color: isCurrent ? MobiusColors.panelOf(context) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            onTap: onPlay,
+            borderRadius: BorderRadius.circular(8),
+            child: SizedBox(
+              height: 60,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    if (isReorderable)
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Icon(
+                            Icons.drag_handle_rounded,
+                            size: 18,
+                            color: MobiusColors.textDimOf(context),
+                          ),
+                        ),
+                      ),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: artwork == null
+                            ? ColoredBox(
+                                color: MobiusColors.panelOf(context),
+                                child: Icon(
+                                  Icons.music_note_rounded,
+                                  color: MobiusColors.textDimOf(context),
+                                  size: 20,
+                                ),
+                              )
+                            : Image(
+                                image: artwork!,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                              ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            track.title.trim().isEmpty ? 'Unknown title' : track.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isCurrent
+                                  ? MobiusColors.accentOf(context)
+                                  : MobiusColors.textOf(context),
+                              fontSize: 14,
+                              fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            track.artist.trim().isEmpty ? 'Unknown artist' : track.artist,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: MobiusColors.textDimOf(context),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (onMore != null)
+                      IconButton(
+                        icon: Icon(
+                          Icons.more_vert_rounded,
+                          size: 18,
+                          color: MobiusColors.textDimOf(context),
+                        ),
+                        onPressed: onMore,
+                        splashRadius: 18,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
       child: Material(

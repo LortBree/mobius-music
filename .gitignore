@@ -37,6 +37,13 @@ build/
 **/android/.cxx/
 **/android/captures/
 **/android/gradle-app.setting
+**/android/app/src/main/jniLibs/
+*.apk
+*.aab
+
+# ---------- Distribution / Release packages ----------
+dist/
+shareable card icon/
 
 # ---------- Rust ----------
 **/target/
@@ -97,6 +104,7 @@ docs/
 !LICENSE.md
 
 # ---------- AI agent tooling ----------
+.agents/
 .kiro/
 .amazonq/
 .claude/

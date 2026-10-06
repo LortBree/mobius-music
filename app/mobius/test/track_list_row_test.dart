@@ -19,11 +19,31 @@ Widget _host({
   );
 }
 
+/// Pump at a desktop width (>= 900) so the row renders its hover/double-tap
+/// desktop branch. The default test surface is 800 wide, which the row now
+/// treats as mobile.
+Future<void> _pumpDesktop(WidgetTester tester, Widget child) async {
+  tester.view.physicalSize = const Size(1200, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(child);
+}
+
+/// Pump at a phone width (< 900) so the row renders its tap-to-play mobile
+/// branch.
+Future<void> _pumpMobile(WidgetTester tester, Widget child) async {
+  tester.view.physicalSize = const Size(400, 800);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(child);
+}
+
 void main() {
-  testWidgets('the playing row is highlighted with an accent eq glyph', (
+  testWidgets('desktop: the playing row is highlighted with an accent eq glyph', (
     tester,
   ) async {
-    await tester.pumpWidget(
+    await _pumpDesktop(
+      tester,
       _host(
         rows: [
           TrackListRow(
@@ -56,14 +76,15 @@ void main() {
     expect(otherTitle.style?.color, isNot(accent));
   });
 
-  testWidgets('double-tap plays this row (with its bound index)', (
+  testWidgets('desktop: double-tap plays this row (with its bound index)', (
     tester,
   ) async {
     final played = <int>[];
     // Bind indices the way the pages do: onPlay: () => play(index).
     void play(int index) => played.add(index);
 
-    await tester.pumpWidget(
+    await _pumpDesktop(
+      tester,
       _host(
         rows: [
           for (var i = 0; i < 3; i++)
@@ -88,10 +109,11 @@ void main() {
     expect(played, [1]);
   });
 
-  testWidgets('hovering a row turns the number into a play button', (
+  testWidgets('desktop: hovering a row turns the number into a play button', (
     tester,
   ) async {
-    await tester.pumpWidget(
+    await _pumpDesktop(
+      tester,
       _host(
         rows: [
           TrackListRow(
@@ -119,8 +141,71 @@ void main() {
     expect(find.text('5'), findsNothing);
   });
 
+  testWidgets('mobile: a single tap plays this row (with its bound index)', (
+    tester,
+  ) async {
+    final played = <int>[];
+    void play(int index) => played.add(index);
+
+    await _pumpMobile(
+      tester,
+      _host(
+        rows: [
+          for (var i = 0; i < 3; i++)
+            TrackListRow(
+              key: ValueKey(i),
+              trackNumber: i + 1,
+              title: 'Track ${i + 1}',
+              isCurrent: false,
+              onPlay: () => play(i),
+            ),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('Track 2'));
+    await tester.pump();
+    expect(played, [1]);
+  });
+
+  testWidgets('mobile: the active row shows the play affordance', (
+    tester,
+  ) async {
+    await _pumpMobile(
+      tester,
+      _host(
+        rows: [
+          TrackListRow(
+            trackNumber: 1,
+            title: 'First',
+            isCurrent: false,
+            onPlay: () {},
+          ),
+          TrackListRow(
+            trackNumber: 2,
+            title: 'Playing Now',
+            isCurrent: true,
+            onPlay: () {},
+          ),
+        ],
+      ),
+    );
+
+    // The active row shows a play affordance (there is no hover on touch).
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    // No hover-only desktop eq glyph on the active row in the mobile branch.
+    expect(find.byIcon(Icons.graphic_eq_rounded), findsNothing);
+
+    // The active row's title is still painted in the accent colour.
+    final context = tester.element(find.text('Playing Now'));
+    final accent = MobiusColors.accentOf(context);
+    final playingTitle = tester.widget<Text>(find.text('Playing Now'));
+    expect(playingTitle.style?.color, accent);
+  });
+
   testWidgets('duration renders in m:ss, or -- when unknown', (tester) async {
-    await tester.pumpWidget(
+    await _pumpDesktop(
+      tester,
       _host(
         rows: [
           TrackListRow(

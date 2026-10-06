@@ -1,7 +1,7 @@
 use offline_player_metadata::EmbeddedArtwork;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct EmbeddedMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,
@@ -13,6 +13,8 @@ pub struct EmbeddedMetadata {
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
     pub artwork: Option<EmbeddedArtwork>,
+    pub track_gain_db: Option<f32>,
+    pub track_peak: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -23,16 +25,18 @@ pub struct NormalizedAlbumMetadata {
     pub genre: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct NormalizedTrackMetadata {
     pub title: Option<String>,
     pub artist: Option<String>,
     pub track_number: Option<u32>,
     pub disc_number: Option<u32>,
     pub composer: Option<String>,
+    pub track_gain_db: Option<f32>,
+    pub track_peak: Option<f32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NormalizedMetadata {
     pub source_path: PathBuf,
     pub album: NormalizedAlbumMetadata,
@@ -55,6 +59,8 @@ impl NormalizedMetadata {
                 track_number: embedded.track_number,
                 disc_number: embedded.disc_number,
                 composer: embedded.composer,
+                track_gain_db: embedded.track_gain_db,
+                track_peak: embedded.track_peak,
             },
         }
     }
@@ -100,6 +106,7 @@ mod tests {
             track_number: Some(1),
             disc_number: Some(1),
             artwork: None,
+            ..Default::default()
         };
 
         let normalized = NormalizedMetadata::from_embedded(PathBuf::from("album.flac"), embedded);
@@ -124,6 +131,7 @@ mod tests {
             track_number: Some(1),
             disc_number: Some(1),
             composer: None,
+            ..Default::default()
         };
 
         let cue = CueMetadataOverride {
@@ -151,6 +159,7 @@ mod tests {
             track_number: Some(3),
             disc_number: Some(1),
             composer: Some("Composer".to_string()),
+            ..Default::default()
         };
 
         let cue = CueMetadataOverride::default();

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 import '../../../app/theme/colors.dart';
 import '../../../playback/equalizer_response.dart';
 
@@ -29,13 +30,19 @@ class EqualizerPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final preset = EqualizerPresets.nameFor(gains);
     final preamp = EqualizerResponse.autoPreampDb(gains);
     final isFlat = preset == 'Flat';
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 10 : 20,
+        isMobile ? 14 : 18,
+        isMobile ? 10 : 20,
+        isMobile ? 12 : 16,
+      ),
       decoration: BoxDecoration(
         color: MobiusColors.panelOf(context),
         border: Border.all(color: MobiusColors.borderOf(context)),
@@ -404,10 +411,10 @@ class _GraphGeometry {
 
   final Size size;
 
-  static const double leftGutter = 34;
+  static const double leftGutter = 26;
   static const double bottomGutter = 20;
   static const double topPad = 12;
-  static const double rightPad = 8;
+  static const double rightPad = 4;
   static const double displayRangeDb = 15; // a little headroom past ±12
 
   double get plotLeft => leftGutter;

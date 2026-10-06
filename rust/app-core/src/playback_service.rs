@@ -71,6 +71,12 @@ impl PlaybackService {
         self.controller.effective_output_rate()
     }
 
+    /// Engine-side signal-path snapshot for the loaded track, or `None` when
+    /// nothing is loaded. Backs the FFI `offline_player_signal_path` export.
+    pub fn signal_path(&self) -> Option<crate::SignalPathSnapshot> {
+        self.controller.signal_path()
+    }
+
     pub fn set_output_mode(&mut self, mode: crate::PlaybackOutputMode) {
         self.controller.set_output_mode(mode);
     }
@@ -81,6 +87,44 @@ impl PlaybackService {
 
     pub fn set_volume(&mut self, volume: f32) {
         self.controller.set_volume(volume);
+    }
+
+    pub fn set_software_volume(&mut self, volume: f32) {
+        self.controller.set_software_volume(volume);
+    }
+
+    pub fn hardware_volume(&self) -> f32 {
+        self.controller.hardware_volume()
+    }
+
+    pub fn set_hardware_volume(&mut self, volume: f32) {
+        self.controller.set_hardware_volume(volume);
+    }
+
+    pub fn is_bit_perfect_mode(&self) -> bool {
+        self.controller.is_bit_perfect_mode()
+    }
+
+    pub fn set_bit_perfect_mode(&mut self, enabled: bool) {
+        self.controller.set_bit_perfect_mode(enabled);
+    }
+
+    pub fn volume_normalization(&self) -> bool {
+        self.controller.volume_normalization()
+    }
+
+    pub fn set_volume_normalization(&mut self, enabled: bool) {
+        self.controller.set_volume_normalization(enabled);
+    }
+
+    pub fn track_gain_db(&self) -> Option<f32> {
+        self.controller.track_gain_db()
+    }
+
+    pub fn switch_output_route(&mut self) -> Result<(), PlaybackServiceError> {
+        self.controller
+            .switch_output_route()
+            .map_err(PlaybackServiceError::Playback)
     }
 
     pub fn equalizer_gains(&self) -> [f32; 10] {

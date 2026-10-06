@@ -8,7 +8,7 @@ use std::{
 use offline_player_app_core::{
     playback_queue::RepeatMode,
     playback_service::{PlaybackService, PlaybackServiceError},
-    PlaybackOutputMode, PlaybackQueue, PlaybackState,
+    PlaybackOutputMode, PlaybackQueue, PlaybackState, SignalPathSnapshot,
 };
 
 const API_VERSION: &[u8] = b"0.1.0\0";
@@ -137,6 +137,28 @@ pub struct OfflinePlayerTrackArtwork {
     pub data: *mut u8,
     pub data_capacity: usize,
     pub data_size: usize,
+}
+
+/// C-ABI mirror of `app_core::SignalPathSnapshot` for
+/// `offline_player_signal_path`. Fixed-size inline char arrays (NUL-padded) so
+/// the caller allocates nothing. Field order and sizes MUST match the header.
+#[repr(C)]
+pub struct OfflinePlayerSignalPath {
+    pub output_sample_rate: u32,
+    pub output_channels: u32,
+    pub output_bits_per_sample: u32,
+    pub output_is_float: u8,
+    pub resampling: u8,
+    pub equalizer_active: u8,
+    pub bit_perfect: u8,
+    pub equalizer_bands: u32,
+    pub volume: f32,
+    pub buffer_ms: u32,
+    pub underrun_samples: u64,
+    pub callback_count: u64,
+    pub route: i32,
+    pub output_api: [c_char; 16],
+    pub device_name: [c_char; 96],
 }
 
 impl OfflinePlayerResult {
@@ -887,6 +909,85 @@ pub unsafe extern "C" fn offline_player_effective_output_rate(
     })
 }
 
+/// Copy `value` into a fixed C char buffer, NUL-terminated, truncating on a
+/// UTF-8 char boundary so the buffer always holds valid UTF-8 and is never
+/// unterminated. Any unused tail is zeroed.
+fn write_fixed_cstr(dst: &mut [c_char], value: &str) {
+    for slot in dst.iter_mut() {
+        *slot = 0;
+    }
+
+    if dst.len() < 2 {
+        return;
+    }
+
+    // Reserve one byte for the terminating NUL.
+    let max = dst.len() - 1;
+    let mut end = value.len().min(max);
+    // Back up to a char boundary so we never split a multi-byte sequence.
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+
+    for (slot, &byte) in dst.iter_mut().zip(value.as_bytes()[..end].iter()) {
+        *slot = byte as c_char;
+    }
+}
+
+/// Fill `*out` with the engine's view of how the loaded track reaches the
+/// output device. Returns `NotFound` when nothing is loaded. Route and (on
+/// Android) device name are left for the host to merge in afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_signal_path(
+    handle: *mut OfflinePlayerHandle,
+    out: *mut OfflinePlayerSignalPath,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        let snapshot: SignalPathSnapshot = match player.service.signal_path() {
+            Some(value) => value,
+            None => {
+                return player.fail(
+                    OfflinePlayerResult::NotFound,
+                    "no track is currently loaded",
+                )
+            }
+        };
+
+        let out = &mut *out;
+
+        out.output_sample_rate = snapshot.output_sample_rate;
+        out.output_channels = snapshot.output_channels;
+        out.output_bits_per_sample = snapshot.output_bits_per_sample;
+        out.output_is_float = u8::from(snapshot.output_is_float);
+        out.resampling = u8::from(snapshot.resampling);
+        out.equalizer_active = u8::from(snapshot.equalizer_active);
+        out.bit_perfect = u8::from(snapshot.bit_perfect);
+        out.equalizer_bands = snapshot.equalizer_bands;
+        out.volume = snapshot.volume;
+        out.buffer_ms = snapshot.buffer_ms;
+        out.underrun_samples = snapshot.underrun_samples;
+        out.callback_count = snapshot.callback_count;
+        // Engine does not classify the route; the host fills it on Android.
+        out.route = 0;
+
+        write_fixed_cstr(&mut out.output_api, snapshot.output_api);
+        write_fixed_cstr(&mut out.device_name, &snapshot.device_name);
+
+        player.clear_error();
+
+        OfflinePlayerResult::Ok
+    })
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn offline_player_set_volume(
     handle: *mut OfflinePlayerHandle,
@@ -908,6 +1009,192 @@ pub unsafe extern "C" fn offline_player_set_volume(
         player.service.set_volume(volume.clamp(0.0, 1.0));
         player.clear_error();
         OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_set_software_volume(
+    handle: *mut OfflinePlayerHandle,
+    volume: f32,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        if !volume.is_finite() {
+            return player.fail(
+                OfflinePlayerResult::InvalidArgument,
+                "software volume must be finite",
+            );
+        }
+
+        player.service.set_software_volume(volume.clamp(0.0, 1.0));
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_set_hardware_volume(
+    handle: *mut OfflinePlayerHandle,
+    volume: f32,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        if !volume.is_finite() {
+            return player.fail(
+                OfflinePlayerResult::InvalidArgument,
+                "hardware volume must be finite",
+            );
+        }
+
+        player.service.set_hardware_volume(volume.clamp(0.0, 1.0));
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_get_hardware_volume(
+    handle: *mut OfflinePlayerHandle,
+    out_volume: *mut f32,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out_volume.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        *out_volume = player.service.hardware_volume();
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_set_bit_perfect_mode(
+    handle: *mut OfflinePlayerHandle,
+    enabled: u8,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        player.service.set_bit_perfect_mode(enabled != 0);
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_get_bit_perfect_mode(
+    handle: *mut OfflinePlayerHandle,
+    out_enabled: *mut u8,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out_enabled.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        *out_enabled = if player.service.is_bit_perfect_mode() { 1 } else { 0 };
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_set_volume_normalization(
+    handle: *mut OfflinePlayerHandle,
+    enabled: u8,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        player.service.set_volume_normalization(enabled != 0);
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_get_volume_normalization(
+    handle: *mut OfflinePlayerHandle,
+    out_enabled: *mut u8,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out_enabled.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        *out_enabled = if player.service.volume_normalization() { 1 } else { 0 };
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_track_gain_db(
+    handle: *mut OfflinePlayerHandle,
+    out_gain_db: *mut f32,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        if out_gain_db.is_null() {
+            return OfflinePlayerResult::NullArgument;
+        }
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        *out_gain_db = player.service.track_gain_db().unwrap_or(0.0);
+        player.clear_error();
+        OfflinePlayerResult::Ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn offline_player_switch_output_route(
+    handle: *mut OfflinePlayerHandle,
+) -> OfflinePlayerResult {
+    ffi_guard(|| {
+        let player = match handle_ref(handle) {
+            Ok(value) => value,
+            Err(code) => return code,
+        };
+
+        match player.service.switch_output_route() {
+            Ok(()) => {
+                player.clear_error();
+                OfflinePlayerResult::Ok
+            }
+            Err(error) => {
+                let code = OfflinePlayerResult::from_service_error(&error);
+                player.set_error(error.to_string());
+                code
+            }
+        }
     })
 }
 
@@ -2084,6 +2371,10 @@ pub unsafe extern "C" fn offline_player_last_error(
         player.write_string(&message, buffer, capacity)
     })
 }
+
+pub mod android;
+pub use android::*;
+
 
 #[cfg(test)]
 mod tests {

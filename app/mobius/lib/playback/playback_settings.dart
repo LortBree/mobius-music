@@ -16,6 +16,8 @@ class PlaybackSettings {
   static const String outputModeKey = 'output_mode_v1';
   static const String equalizerGainsKey = 'equalizer_gains_v1';
   static const String equalizerEnabledKey = 'equalizer_enabled_v1';
+  static const String bitPerfectModeKey = 'bit_perfect_mode_v1';
+  static const String volumeNormalizationKey = 'volume_normalization_v1';
 
   static const List<double> flatGains = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
@@ -37,7 +39,7 @@ class PlaybackSettings {
 
     final volume = prefs.getDouble(volumeKey);
     if (volume != null && volume.isFinite) {
-      _tryApply(() => controller.setVolume(volume));
+      _tryApply(() => controller.setVolume(volume, triggerPanel: false));
     }
 
     final modeName = prefs.getString(outputModeKey);
@@ -48,6 +50,16 @@ class PlaybackSettings {
           break;
         }
       }
+    }
+
+    final bitPerfect = prefs.getBool(bitPerfectModeKey);
+    if (bitPerfect != null) {
+      _tryApply(() => controller.setBitPerfectMode(bitPerfect));
+    }
+
+    final normalization = prefs.getBool(volumeNormalizationKey);
+    if (normalization != null) {
+      _tryApply(() => controller.setVolumeNormalization(normalization));
     }
 
     final enabled = prefs.getBool(equalizerEnabledKey) ?? false;
@@ -67,6 +79,16 @@ class PlaybackSettings {
   static Future<void> saveOutputMode(OfflinePlayerOutputMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(outputModeKey, mode.name);
+  }
+
+  static Future<void> saveBitPerfectMode(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(bitPerfectModeKey, enabled);
+  }
+
+  static Future<void> saveVolumeNormalization(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(volumeNormalizationKey, enabled);
   }
 
   static Timer? _volumeSave;

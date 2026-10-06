@@ -216,6 +216,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "libusb1-sys"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da050ade7ac4ff1ba5379af847a10a10a8e284181e060105bf8d86960ce9ce0f"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "lofty"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -324,6 +336,7 @@ dependencies = [
  "offline-player-db",
  "offline-player-decoder",
  "offline-player-metadata",
+ "offline-player-platform-android",
  "offline-player-platform-macos",
  "rusqlite",
  "thiserror",
@@ -350,6 +363,7 @@ name = "offline-player-decoder"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "libc",
  "offline-player-audio-core",
  "sha2",
  "symphonia",
@@ -361,6 +375,7 @@ name = "offline-player-ffi"
 version = "0.1.0"
 dependencies = [
  "offline-player-app-core",
+ "offline-player-platform-android",
 ]
 
 [[package]]
@@ -369,6 +384,16 @@ version = "0.1.0"
 dependencies = [
  "lofty",
  "thiserror",
+]
+
+[[package]]
+name = "offline-player-platform-android"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "libusb1-sys",
+ "offline-player-audio-core",
+ "rusb",
 ]
 
 [[package]]
@@ -448,6 +473,16 @@ name = "rtrb"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9278fb35b3e730abe136e9b395b5b81b96d06b9f5478a50f0c8430a2237b22de"
+
+[[package]]
+name = "rusb"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab9f9ff05b63a786553a4c02943b74b34a988448671001e9a27e2f0565cc05a4"
+dependencies = [
+ "libc",
+ "libusb1-sys",
+]
 
 [[package]]
 name = "rusqlite"

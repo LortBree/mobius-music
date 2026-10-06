@@ -1,9 +1,13 @@
 import 'dart:ffi' as ffi;
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import '../audio/signal_path.dart';
 import 'offline_player_bindings.dart';
+
+export '../audio/signal_path.dart';
 
 class ScanResult {
   const ScanResult({
@@ -589,6 +593,148 @@ class OfflinePlayer {
     }
   }
 
+  /// Live signal path of the current track (`offline_player_signal_path`).
+  /// Throws [OfflinePlayerException] when nothing is loaded.
+  ///
+  /// The engine fills the output/DSP/telemetry fields; the source fields
+  /// (format, source rate/bits/channels, lossless) are merged in here from
+  /// [technicalInfo]. On Android [SignalPath.bitPerfect] is always false and
+  /// route/deviceName are filled by [PlayerController.readSignalPath] from the
+  /// host channel — this getter leaves them at the engine defaults.
+  SignalPath get signalPath {
+    _ensureNotDisposed();
+
+    final out = calloc<OfflinePlayerSignalPath>();
+    try {
+      // Throws via _check when no track is loaded (NotFound) or on any engine
+      // error, matching every other binding's error convention.
+      _check(_bindings.signalPath(_handle, out));
+
+      final ref = out.ref;
+
+      // Source fields come from the engine's current-track technical info.
+      final info = technicalInfo;
+      final format = info.format;
+
+      return SignalPath(
+        sourceFormat: format,
+        sourceSampleRate: info.sampleRate,
+        sourceBitsPerSample: info.bitsPerSample,
+        sourceChannels: info.channels,
+        lossless: _losslessFormats.contains(format.toUpperCase()),
+        outputSampleRate: ref.outputSampleRate,
+        outputChannels: ref.outputChannels,
+        outputBitsPerSample: ref.outputBitsPerSample,
+        outputIsFloat: ref.outputIsFloat != 0,
+        resampling: ref.resampling != 0,
+        equalizerActive: ref.equalizerActive != 0,
+        equalizerBands: ref.equalizerBands,
+        volume: ref.volume,
+        bitPerfect: ref.bitPerfect != 0,
+        bufferMs: ref.bufferMs,
+        underrunSamples: ref.underrunSamples,
+        callbackCount: ref.callbackCount,
+        outputApi: _readFixedCharArray(ref.outputApi, 16),
+        route: _routeFromRaw(ref.route),
+        deviceName: _readFixedCharArray(ref.deviceName, 96),
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Run the Phase 2 USB Isochronous Gate Spike on Android.
+  /// Returns null if not on Android or FFI export unavailable.
+  UsbSpikeReport? runUsbSpike({
+    required int fd,
+    required int vid,
+    required int pid,
+    required int targetInterface,
+    int durationSecs = 10,
+  }) {
+    final fn = _bindings.runUsbSpike;
+    if (fn == null) return null;
+
+    final out = calloc<OfflinePlayerUsbSpikeResult>();
+    try {
+      final res = fn(fd, vid, pid, targetInterface, durationSecs, out);
+      if (res != 0) return null;
+
+      final r = out.ref;
+      return UsbSpikeReport(
+        success: r.success != 0,
+        wrapOk: r.wrapOk != 0,
+        claimOk: r.claimOk != 0,
+        altsettingOk: r.altsettingOk != 0,
+        outEndpoint: r.outEndpoint,
+        feedbackEndpoint: r.feedbackEndpoint,
+        altSetting: r.altSetting,
+        packetsSubmitted: r.packetsSubmitted,
+        packetsCompleted: r.packetsCompleted,
+        packetsError: r.packetsError,
+        feedbackPacketsRead: r.feedbackPacketsRead,
+        lastFeedbackRaw: r.lastFeedbackRaw,
+        feedbackFreqKhz: r.feedbackFreqKhz,
+        durationSecs: r.durationSecs,
+        errorMessage: _readFixedCharArray(r.errorMsg, 256),
+        descriptorSummary: _readFixedCharArray(r.descriptorSummary, 2048),
+      );
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// Configure USB DAC direct output descriptor fd, vid, pid.
+  /// Pass fd < 0 to reset to AAudio output.
+  void setUsbDac({required int fd, required int vid, required int pid}) {
+    _ensureNotDisposed();
+    _bindings.setUsbDac?.call(fd, vid, pid);
+  }
+
+  /// Container/codec labels the engine treats as lossless (matches the Section
+  /// R2 contract). Compared case-insensitively against [TrackTechnicalInfo]'s
+  /// upper-cased format label.
+  static const _losslessFormats = {
+    'FLAC',
+    'WAV',
+    'AIFF',
+    'ALAC',
+    'APE',
+    'WAVPACK',
+    'WV',
+    'DSF',
+    'DFF',
+  };
+
+  static OutputRoute _routeFromRaw(int value) {
+    switch (value) {
+      case 1:
+        return OutputRoute.speaker;
+      case 2:
+        return OutputRoute.wired;
+      case 3:
+        return OutputRoute.bluetooth;
+      case 4:
+        return OutputRoute.usb;
+      default:
+        return OutputRoute.unknown;
+    }
+  }
+
+  /// Read a fixed-capacity, NUL-terminated C char array into a Dart string,
+  /// stopping at the first NUL (or [capacity] when unterminated). The native
+  /// side writes UTF-8; char values are treated as unsigned bytes.
+  static String _readFixedCharArray(ffi.Array<ffi.Char> array, int capacity) {
+    final bytes = <int>[];
+    for (var i = 0; i < capacity; i++) {
+      final value = array[i] & 0xff;
+      if (value == 0) break;
+      bytes.add(value);
+    }
+    if (bytes.isEmpty) return '';
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
   void setOutputMode(OfflinePlayerOutputMode mode) {
     _ensureNotDisposed();
     _check(_bindings.setOutputMode(_handle, mode.index));
@@ -597,6 +743,82 @@ class OfflinePlayer {
   void setVolume(double volume) {
     _ensureNotDisposed();
     _check(_bindings.setVolume(_handle, volume.clamp(0.0, 1.0)));
+  }
+
+  void setSoftwareVolume(double volume) {
+    _ensureNotDisposed();
+    _check(_bindings.setSoftwareVolume(_handle, volume.clamp(0.0, 1.0)));
+  }
+
+  void setHardwareVolume(double volume) {
+    _ensureNotDisposed();
+    _check(_bindings.setHardwareVolume(_handle, volume.clamp(0.0, 1.0)));
+  }
+
+  double getHardwareVolume() {
+    _ensureNotDisposed();
+    final out = calloc<ffi.Float>();
+    try {
+      _check(_bindings.getHardwareVolume(_handle, out));
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  void setBitPerfectMode(bool enabled) {
+    _ensureNotDisposed();
+    _check(_bindings.setBitPerfectMode(_handle, enabled ? 1 : 0));
+  }
+
+  bool isBitPerfectMode() {
+    _ensureNotDisposed();
+    final out = calloc<ffi.Uint8>();
+    try {
+      _check(_bindings.getBitPerfectMode(_handle, out));
+      return out.value != 0;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  void setVolumeNormalization(bool enabled) {
+    _ensureNotDisposed();
+    final fn = _bindings.setVolumeNormalization;
+    if (fn != null) {
+      _check(fn(_handle, enabled ? 1 : 0));
+    }
+  }
+
+  bool isVolumeNormalization() {
+    _ensureNotDisposed();
+    final fn = _bindings.getVolumeNormalization;
+    if (fn == null) return false;
+    final out = calloc<ffi.Uint8>();
+    try {
+      _check(fn(_handle, out));
+      return out.value != 0;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  double getTrackGainDb() {
+    _ensureNotDisposed();
+    final fn = _bindings.trackGainDb;
+    if (fn == null) return 0.0;
+    final out = calloc<ffi.Float>();
+    try {
+      _check(fn(_handle, out));
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  void switchOutputRoute() {
+    _ensureNotDisposed();
+    _check(_bindings.switchOutputRoute(_handle));
   }
 
   void setEqualizerGains(List<double> gainsDb) {
@@ -1019,3 +1241,58 @@ class OfflinePlayer {
     }
   }
 }
+
+class UsbSpikeReport {
+  const UsbSpikeReport({
+    required this.success,
+    required this.wrapOk,
+    required this.claimOk,
+    required this.altsettingOk,
+    required this.outEndpoint,
+    required this.feedbackEndpoint,
+    required this.altSetting,
+    required this.packetsSubmitted,
+    required this.packetsCompleted,
+    required this.packetsError,
+    required this.feedbackPacketsRead,
+    required this.lastFeedbackRaw,
+    required this.feedbackFreqKhz,
+    required this.durationSecs,
+    required this.errorMessage,
+    required this.descriptorSummary,
+  });
+
+  final bool success;
+  final bool wrapOk;
+  final bool claimOk;
+  final bool altsettingOk;
+  final int outEndpoint;
+  final int feedbackEndpoint;
+  final int altSetting;
+  final int packetsSubmitted;
+  final int packetsCompleted;
+  final int packetsError;
+  final int feedbackPacketsRead;
+  final int lastFeedbackRaw;
+  final double feedbackFreqKhz;
+  final double durationSecs;
+  final String errorMessage;
+  final String descriptorSummary;
+
+  @override
+  String toString() {
+    return 'UsbSpikeReport(\n'
+        '  success: $success,\n'
+        '  wrapOk: $wrapOk,\n'
+        '  claimOk: $claimOk,\n'
+        '  altsettingOk: $altsettingOk,\n'
+        '  endpoints: OUT=0x${outEndpoint.toRadixString(16)}, FB=0x${feedbackEndpoint.toRadixString(16)},\n'
+        '  altSetting: $altSetting,\n'
+        '  packets: submitted=$packetsSubmitted, completed=$packetsCompleted, errors=$packetsError,\n'
+        '  feedback: packets=$feedbackPacketsRead, raw=0x${lastFeedbackRaw.toRadixString(16)}, freq=${feedbackFreqKhz.toStringAsFixed(3)} kHz,\n'
+        '  duration: ${durationSecs.toStringAsFixed(2)}s,\n'
+        '  error: $errorMessage\n'
+        ')';
+  }
+}
+

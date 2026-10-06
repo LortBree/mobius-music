@@ -1002,6 +1002,26 @@ impl PcmOutput {
         self.state.volume.store(volume.to_bits(), Ordering::Relaxed);
     }
 
+    pub fn set_software_volume(&self, volume: f32) {
+        self.set_volume(volume);
+    }
+
+    pub fn set_hardware_volume(&self, _volume: f32) {}
+
+    pub fn set_bit_perfect_mode(&self, _enabled: bool) {}
+
+    pub fn is_bit_perfect_mode(&self) -> bool {
+        true
+    }
+
+    pub fn hardware_volume(&self) -> f32 {
+        1.0
+    }
+
+    pub fn software_volume(&self) -> f32 {
+        f32::from_bits(self.state.volume.load(Ordering::Relaxed))
+    }
+
     pub fn telemetry(&self) -> PlaybackTelemetry {
         let mut first_bytes = [0u8; 16];
 

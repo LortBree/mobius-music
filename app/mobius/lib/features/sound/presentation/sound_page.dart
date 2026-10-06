@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 import '../../../app/theme/colors.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../../../playback/playback_settings.dart';
@@ -196,8 +197,9 @@ class _SoundPageState extends State<SoundPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
+      padding: EdgeInsets.fromLTRB(isMobile ? 16 : 32, 12, isMobile ? 16 : 36, 24),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
@@ -227,17 +229,123 @@ class _SoundPageState extends State<SoundPage> {
               const SizedBox(height: 32),
               const SettingsSectionTitle('Volume'),
               const SizedBox(height: 16),
-              SettingsRow(
-                title: 'Output volume',
-                description:
-                    'Sets the playback level. The speaker icon mutes; the '
-                    'up/down arrow keys adjust it too.',
-                trailing: VolumeControl(
-                  volume: widget.playerController.volumeListenable,
-                  onChanged: _setVolume,
-                  onChangeEnd: _commitVolume,
-                  sliderWidth: 180,
-                ),
+              ValueListenableBuilder<bool>(
+                valueListenable: widget.playerController.bitPerfectModeListenable,
+                builder: (context, isBitPerfect, _) {
+                  final isUsb = widget.playerController.isUsbDacActive;
+                  if (!isUsb) {
+                    return SettingsRow(
+                      title: 'Output volume',
+                      description:
+                          'Sets the playback level. The speaker icon mutes; the '
+                          'up/down arrow keys adjust it too.',
+                      trailing: VolumeControl(
+                        volume: widget.playerController.volumeListenable,
+                        onChanged: _setVolume,
+                        onChangeEnd: _commitVolume,
+                        sliderWidth: isMobile ? 220 : 180,
+                      ),
+                    );
+                  }
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SettingsRow(
+                        title: 'Playback Mode',
+                        description: isBitPerfect
+                            ? 'Bit-Perfect Mode: 100% passthrough. Hardware DAC volume active.'
+                            : 'Standard Mode: Software digital attenuation and DSP active.',
+                        trailing: SizedBox(
+                          width: isMobile ? double.infinity : null,
+                          child: SegmentedButton<bool>(
+                            segments: const [
+                              ButtonSegment<bool>(
+                                value: true,
+                                label: Text('Bit-Perfect', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                icon: Icon(Icons.bolt_rounded, size: 16),
+                              ),
+                              ButtonSegment<bool>(
+                                value: false,
+                                label: Text('Standard', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                                icon: Icon(Icons.tune_rounded, size: 16),
+                              ),
+                            ],
+                            selected: {isBitPerfect},
+                            onSelectionChanged: (selection) {
+                              widget.playerController.setBitPerfectMode(selection.first);
+                            },
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.comfortable,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SettingsRow(
+                        title: 'Hardware volume (DAC)',
+                        description:
+                            'Amplifier attenuation directly on the USB DAC via UAC2 Feature Unit 7. Safe default: -20 dB.',
+                        trailing: VolumeControl(
+                          volume: widget.playerController.hardwareVolumeListenable,
+                          onChanged: (val) => widget.playerController.setHardwareVolume(val),
+                          onChangeEnd: (val) => widget.playerController.setHardwareVolume(val),
+                          sliderWidth: isMobile ? 220 : 180,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SettingsRow(
+                        title: 'Software volume (Mobius)',
+                        description: isBitPerfect
+                            ? 'Locked at 100% (0 dBFS) to preserve bit-perfect fidelity.'
+                            : 'Digital PCM attenuation before reaching the USB DAC.',
+                        trailing: isBitPerfect
+                            ? Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: MobiusColors.nativeOf(context).withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: MobiusColors.nativeOf(context).withValues(alpha: 0.4),
+                                  ),
+                                ),
+                                child: Text(
+                                  '100% Passthrough',
+                                  style: TextStyle(
+                                    color: MobiusColors.nativeOf(context),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              )
+                            : VolumeControl(
+                                volume: widget.playerController.volumeListenable,
+                                onChanged: _setVolume,
+                                onChangeEnd: _commitVolume,
+                                sliderWidth: isMobile ? 220 : 180,
+                              ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              ValueListenableBuilder<bool>(
+                valueListenable: widget.playerController.volumeNormalizationListenable,
+                builder: (context, normalized, _) {
+                  return SettingsRow(
+                    title: 'Volume Normalization',
+                    description:
+                        'Equalizes perceived loudness across all tracks so playback remains at a flat, uniform level. Automatically bypassed in Bit-Perfect mode.',
+                    trailing: Switch.adaptive(
+                      value: normalized,
+                      onChanged: (val) {
+                        widget.playerController.setVolumeNormalization(val);
+                      },
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 32),
               // EqualizerPanel carries its own "Equalizer" heading and switch.

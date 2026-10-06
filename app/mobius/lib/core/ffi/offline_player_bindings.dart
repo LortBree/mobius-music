@@ -1,7 +1,8 @@
 import 'dart:ffi' as ffi;
-import 'dart:io';
 
 import 'package:ffi/ffi.dart';
+
+import '../../platform/platform_services.dart';
 
 final class OfflinePlayerHandle extends ffi.Opaque {}
 
@@ -73,6 +74,106 @@ final class OfflinePlayerTrackArtwork extends ffi.Struct {
 
   @ffi.Uint64()
   external int dataSize;
+}
+
+/// Mirrors the C `OfflinePlayerSignalPath` struct (offline_player.h). Field
+/// order and sizes MUST match the header; the two inline char arrays are
+/// fixed-capacity, NUL-terminated UTF-8 the native side fills.
+final class OfflinePlayerSignalPath extends ffi.Struct {
+  @ffi.Uint32()
+  external int outputSampleRate;
+
+  @ffi.Uint32()
+  external int outputChannels;
+
+  @ffi.Uint32()
+  external int outputBitsPerSample;
+
+  @ffi.Uint8()
+  external int outputIsFloat;
+
+  @ffi.Uint8()
+  external int resampling;
+
+  @ffi.Uint8()
+  external int equalizerActive;
+
+  @ffi.Uint8()
+  external int bitPerfect;
+
+  @ffi.Uint32()
+  external int equalizerBands;
+
+  @ffi.Float()
+  external double volume;
+
+  @ffi.Uint32()
+  external int bufferMs;
+
+  @ffi.Uint64()
+  external int underrunSamples;
+
+  @ffi.Uint64()
+  external int callbackCount;
+
+  @ffi.Int32()
+  external int route;
+
+  @ffi.Array<ffi.Char>(16)
+  external ffi.Array<ffi.Char> outputApi;
+
+  @ffi.Array<ffi.Char>(96)
+  external ffi.Array<ffi.Char> deviceName;
+}
+
+final class OfflinePlayerUsbSpikeResult extends ffi.Struct {
+  @ffi.Uint8()
+  external int success;
+
+  @ffi.Uint8()
+  external int wrapOk;
+
+  @ffi.Uint8()
+  external int claimOk;
+
+  @ffi.Uint8()
+  external int altsettingOk;
+
+  @ffi.Uint8()
+  external int outEndpoint;
+
+  @ffi.Uint8()
+  external int feedbackEndpoint;
+
+  @ffi.Int32()
+  external int altSetting;
+
+  @ffi.Uint64()
+  external int packetsSubmitted;
+
+  @ffi.Uint64()
+  external int packetsCompleted;
+
+  @ffi.Uint64()
+  external int packetsError;
+
+  @ffi.Uint64()
+  external int feedbackPacketsRead;
+
+  @ffi.Uint32()
+  external int lastFeedbackRaw;
+
+  @ffi.Double()
+  external double feedbackFreqKhz;
+
+  @ffi.Double()
+  external double durationSecs;
+
+  @ffi.Array<ffi.Char>(256)
+  external ffi.Array<ffi.Char> errorMsg;
+
+  @ffi.Array<ffi.Char>(2048)
+  external ffi.Array<ffi.Char> descriptorSummary;
 }
 
 /*
@@ -329,6 +430,54 @@ typedef SetVolumeNative =
 
 typedef SetVolumeDart = int Function(ffi.Pointer<OfflinePlayerHandle>, double);
 
+typedef SetHardwareVolumeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Float);
+
+typedef SetHardwareVolumeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, double);
+
+typedef GetHardwareVolumeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Float>);
+
+typedef GetHardwareVolumeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Float>);
+
+typedef SetBitPerfectModeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Uint8);
+
+typedef SetBitPerfectModeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int);
+
+typedef GetBitPerfectModeNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint8>);
+
+typedef GetBitPerfectModeDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint8>);
+
+
+typedef SetVolumeNormalizationNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Uint8);
+
+typedef SetVolumeNormalizationDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, int);
+
+typedef GetVolumeNormalizationNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint8>);
+
+typedef GetVolumeNormalizationDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint8>);
+
+typedef TrackGainDbNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Float>);
+
+typedef TrackGainDbDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Float>);
+typedef SwitchOutputRouteNative =
+    ffi.Int32 Function(ffi.Pointer<OfflinePlayerHandle>);
+
+typedef SwitchOutputRouteDart =
+    int Function(ffi.Pointer<OfflinePlayerHandle>);
+
 typedef SetEqualizerGainsNative =
     ffi.Int32 Function(
       ffi.Pointer<OfflinePlayerHandle>,
@@ -516,6 +665,49 @@ typedef EffectiveOutputRateDart =
     int Function(ffi.Pointer<OfflinePlayerHandle>, ffi.Pointer<ffi.Uint32>);
 
 /*
+ * Signal path
+ */
+
+typedef SignalPathNative =
+    ffi.Int32 Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<OfflinePlayerSignalPath>,
+    );
+
+typedef SignalPathDart =
+    int Function(
+      ffi.Pointer<OfflinePlayerHandle>,
+      ffi.Pointer<OfflinePlayerSignalPath>,
+    );
+
+/*
+ * USB Spike (Android UAC2 bit-perfect gate)
+ */
+
+typedef RunUsbSpikeNative =
+    ffi.Int32 Function(
+      ffi.Int32,
+      ffi.Uint16,
+      ffi.Uint16,
+      ffi.Int32,
+      ffi.Uint32,
+      ffi.Pointer<OfflinePlayerUsbSpikeResult>,
+    );
+
+typedef RunUsbSpikeDart =
+    int Function(
+      int,
+      int,
+      int,
+      int,
+      int,
+      ffi.Pointer<OfflinePlayerUsbSpikeResult>,
+    );
+
+typedef SetUsbDacNative = ffi.Int32 Function(ffi.Int32, ffi.Uint16, ffi.Uint16);
+typedef SetUsbDacDart = int Function(int, int, int);
+
+/*
  * Bindings
  */
 
@@ -629,6 +821,62 @@ class OfflinePlayerBindings {
     setVolume = library.lookupFunction<SetVolumeNative, SetVolumeDart>(
       'offline_player_set_volume',
     );
+
+    setSoftwareVolume = library.lookupFunction<SetVolumeNative, SetVolumeDart>(
+      'offline_player_set_software_volume',
+    );
+
+    setHardwareVolume = library.lookupFunction<
+      SetHardwareVolumeNative,
+      SetHardwareVolumeDart
+    >('offline_player_set_hardware_volume');
+
+    getHardwareVolume = library.lookupFunction<
+      GetHardwareVolumeNative,
+      GetHardwareVolumeDart
+    >('offline_player_get_hardware_volume');
+
+    setBitPerfectMode = library.lookupFunction<
+      SetBitPerfectModeNative,
+      SetBitPerfectModeDart
+    >('offline_player_set_bit_perfect_mode');
+
+    getBitPerfectMode = library.lookupFunction<
+      GetBitPerfectModeNative,
+      GetBitPerfectModeDart
+    >('offline_player_get_bit_perfect_mode');
+
+
+    try {
+      setVolumeNormalization = library.lookupFunction<
+        SetVolumeNormalizationNative,
+        SetVolumeNormalizationDart
+      >('offline_player_set_volume_normalization');
+    } catch (_) {
+      setVolumeNormalization = null;
+    }
+
+    try {
+      getVolumeNormalization = library.lookupFunction<
+        GetVolumeNormalizationNative,
+        GetVolumeNormalizationDart
+      >('offline_player_get_volume_normalization');
+    } catch (_) {
+      getVolumeNormalization = null;
+    }
+
+    try {
+      trackGainDb = library.lookupFunction<
+        TrackGainDbNative,
+        TrackGainDbDart
+      >('offline_player_track_gain_db');
+    } catch (_) {
+      trackGainDb = null;
+    }
+    switchOutputRoute = library.lookupFunction<
+      SwitchOutputRouteNative,
+      SwitchOutputRouteDart
+    >('offline_player_switch_output_route');
 
     setEqualizerGains = library
         .lookupFunction<SetEqualizerGainsNative, SetEqualizerGainsDart>(
@@ -749,6 +997,28 @@ class OfflinePlayerBindings {
         .lookupFunction<EffectiveOutputRateNative, EffectiveOutputRateDart>(
           'offline_player_effective_output_rate',
         );
+
+    signalPath = library.lookupFunction<SignalPathNative, SignalPathDart>(
+      'offline_player_signal_path',
+    );
+
+    try {
+      runUsbSpike = library
+          .lookupFunction<RunUsbSpikeNative, RunUsbSpikeDart>(
+            'offline_player_run_usb_spike',
+          );
+    } catch (_) {
+      runUsbSpike = null;
+    }
+
+    try {
+      setUsbDac = library
+          .lookupFunction<SetUsbDacNative, SetUsbDacDart>(
+            'offline_player_set_usb_dac',
+          );
+    } catch (_) {
+      setUsbDac = null;
+    }
   }
 
   final ffi.DynamicLibrary library;
@@ -785,6 +1055,15 @@ class OfflinePlayerBindings {
   late final QueueSetDart queueSet;
 
   late final SetVolumeDart setVolume;
+  late final SetVolumeDart setSoftwareVolume;
+  late final SetHardwareVolumeDart setHardwareVolume;
+  late final GetHardwareVolumeDart getHardwareVolume;
+  late final SetBitPerfectModeDart setBitPerfectMode;
+  late final GetBitPerfectModeDart getBitPerfectMode;
+  late final SetVolumeNormalizationDart? setVolumeNormalization;
+  late final GetVolumeNormalizationDart? getVolumeNormalization;
+  late final TrackGainDbDart? trackGainDb;
+  late final SwitchOutputRouteDart switchOutputRoute;
   late final SetEqualizerGainsDart setEqualizerGains;
   late final QueueAddDart queueAdd;
   late final QueueClearDart queueClear;
@@ -815,26 +1094,11 @@ class OfflinePlayerBindings {
   late final SetOutputModeDart setOutputMode;
   late final OutputModeDart outputMode;
   late final EffectiveOutputRateDart effectiveOutputRate;
+  late final SignalPathDart signalPath;
+  late final RunUsbSpikeDart? runUsbSpike;
+  late final SetUsbDacDart? setUsbDac;
 
   static ffi.DynamicLibrary openLibrary(String path) {
-    if (!Platform.isMacOS) {
-      throw UnsupportedError('Mobius currently supports macOS only.');
-    }
-
-    final executable = File(Platform.resolvedExecutable);
-
-    final contentsDirectory = executable.parent.parent;
-
-    final bundledLibrary = File(
-      '${contentsDirectory.path}/Frameworks/'
-      'liboffline_player_ffi.dylib',
-    );
-
-    if (bundledLibrary.existsSync()) {
-      return ffi.DynamicLibrary.open(bundledLibrary.path);
-    }
-
-    // Fallback untuk development/debug.
-    return ffi.DynamicLibrary.open(path);
+    return PlatformServices.paths.openLibrary(path);
   }
 }

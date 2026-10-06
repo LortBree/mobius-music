@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/colors.dart';
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 
 /// A single row in an album/artist detail tracklist.
 ///
@@ -21,6 +22,7 @@ class TrackListRow extends StatefulWidget {
     required this.onPlay,
     this.artistSubtitle,
     this.duration,
+    this.onMore,
   });
 
   /// The number shown at the left (1-based display value already resolved by
@@ -40,6 +42,7 @@ class TrackListRow extends StatefulWidget {
 
   final bool isCurrent;
   final VoidCallback onPlay;
+  final VoidCallback? onMore;
 
   @override
   State<TrackListRow> createState() => _TrackListRowState();
@@ -59,87 +62,118 @@ class _TrackListRowState extends State<TrackListRow> {
     final subtitle = widget.artistSubtitle?.trim() ?? '';
     final hasSubtitle = subtitle.isNotEmpty;
     final accent = MobiusColors.accentOf(context);
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
 
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onDoubleTap: widget.onPlay,
-        child: Material(
-          color: _rowColor(context),
-          borderRadius: BorderRadius.circular(6),
-          child: SizedBox(
-            height: 56,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 40,
-                    child: Center(child: _buildLeading(context, accent)),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.title.trim().isEmpty
-                              ? 'Unknown title'
-                              : widget.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: widget.isCurrent
-                                ? accent
-                                : MobiusColors.textOf(context),
-                            fontSize: 14,
-                            fontWeight: widget.isCurrent
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                          ),
-                        ),
-                        if (hasSubtitle) ...[
-                          const SizedBox(height: 3),
-                          Text(
-                            subtitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: MobiusColors.textDimOf(context),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Text(
-                    _formatDuration(widget.duration),
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      color: MobiusColors.textDimOf(context),
-                      fontSize: 12,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
+    final row = Material(
+      color: _rowColor(context),
+      borderRadius: BorderRadius.circular(6),
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 40,
+                child: Center(child: _buildLeading(context, accent, isMobile)),
               ),
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title.trim().isEmpty
+                          ? 'Unknown title'
+                          : widget.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: widget.isCurrent
+                            ? accent
+                            : MobiusColors.textOf(context),
+                        fontSize: 14,
+                        fontWeight: widget.isCurrent
+                            ? FontWeight.w600
+                            : FontWeight.w400,
+                      ),
+                    ),
+                    if (hasSubtitle) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: MobiusColors.textDimOf(context),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (isMobile && widget.onMore != null)
+                IconButton(
+                  icon: const Icon(Icons.more_vert_rounded),
+                  iconSize: 20,
+                  color: MobiusColors.textDimOf(context),
+                  tooltip: 'More options',
+                  onPressed: widget.onMore,
+                )
+              else ...[
+                const SizedBox(width: 16),
+                Text(
+                  _formatDuration(widget.duration),
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
+                    fontSize: 12,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
     );
+
+    // On touch there is no hover: a single tap on the whole row plays it, and
+    // the active row shows the play affordance (handled in _buildLeading).
+    if (isMobile) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onPlay,
+        child: row,
+      );
+    }
+
+    // Desktop: hover reveals the play affordance; double-click plays.
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(onDoubleTap: widget.onPlay, child: row),
+    );
   }
 
-  Widget _buildLeading(BuildContext context, Color accent) {
+  Widget _buildLeading(BuildContext context, Color accent, bool isMobile) {
     // Playing: accent equalizer glyph, regardless of hover.
     if (widget.isCurrent) {
+      // On mobile, the active row shows a play affordance (no hover exists);
+      // on desktop it keeps the equalizer glyph.
+      if (isMobile) {
+        return Icon(
+          Icons.play_arrow_rounded,
+          size: 20,
+          color: MobiusColors.accentLightOf(context),
+        );
+      }
       return Icon(Icons.graphic_eq_rounded, size: 18, color: accent);
     }
-    // Hover: the number becomes a play affordance.
+    // Desktop hover: the number becomes a play affordance. (No hover on
+    // mobile, so this branch is never taken there.)
     if (_hovered) {
       return IconButton(
         tooltip: 'Play',

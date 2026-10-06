@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobius/app/theme/mobius_theme.dart';
 import 'package:mobius/core/ffi/offline_player.dart';
 import 'package:mobius/features/settings/presentation/equalizer_panel.dart';
+import 'package:mobius/features/settings/presentation/settings_widgets.dart';
 import 'package:mobius/features/sound/presentation/sound_page.dart';
 import 'package:mobius/playback/playback_settings.dart';
 import 'package:mobius/playback/player_controller.dart';
@@ -116,5 +117,38 @@ void main() {
     // debounce.
     final preferences = await SharedPreferences.getInstance();
     expect(preferences.getDouble(PlaybackSettings.volumeKey), isNotNull);
+  });
+
+  testWidgets('toggling volume normalization in SoundPage updates controller and settings', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final player = _SoundPlayer();
+    final controller = PlayerController(player);
+    await _pump(tester, controller);
+
+    expect(find.text('Volume Normalization'), findsOneWidget);
+    expect(controller.volumeNormalization, isFalse);
+
+    // Find the Volume Normalization switch and toggle it on
+    final switchFinder = find.widgetWithText(SettingsRow, 'Volume Normalization');
+    expect(switchFinder, findsOneWidget);
+    final switchWidget = find.descendant(of: switchFinder, matching: find.byType(Switch));
+    expect(switchWidget, findsOneWidget);
+
+    await tester.tap(switchWidget);
+    await tester.pumpAndSettle();
+
+    expect(controller.volumeNormalization, isTrue);
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getBool(PlaybackSettings.volumeNormalizationKey), isTrue);
+
+    // Toggle it off
+    await tester.tap(switchWidget);
+    await tester.pumpAndSettle();
+
+    expect(controller.volumeNormalization, isFalse);
+    expect(preferences.getBool(PlaybackSettings.volumeNormalizationKey), isFalse);
   });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 import '../../../app/theme/colors.dart';
 
 /// Shared building blocks for the Settings and Sound pages, so both pages
@@ -18,13 +19,14 @@ class SettingsPageHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-            fontSize: 42,
+            fontSize: isMobile ? 32 : 42,
             fontWeight: FontWeight.w600,
             // Tight line box: the theme's default leading added ~10px of
             // empty space above the title on top of the page padding.
@@ -72,41 +74,58 @@ class SettingsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+
+    final info = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          description,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(height: 1.35),
+        ),
+      ],
+    );
+
     return Container(
       constraints: const BoxConstraints(minHeight: 72),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 16 : 20,
+        vertical: 16,
+      ),
       decoration: BoxDecoration(
         color: MobiusColors.panelOf(context),
         border: Border.all(color: MobiusColors.borderOf(context)),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: Column(
+      child: isMobile
+          ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  description,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(height: 1.35),
+                info,
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: trailing,
                 ),
               ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(child: info),
+                const SizedBox(width: 32),
+                trailing,
+              ],
             ),
-          ),
-          const SizedBox(width: 32),
-          trailing,
-        ],
-      ),
     );
   }
 }
@@ -128,14 +147,14 @@ class SettingsDropdown<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sized to its content (not a fixed 170px expanded box), so the chevron
-    // sits right next to the selected value instead of far off to the right.
-    return DropdownButtonHideUnderline(
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    final dropdown = DropdownButtonHideUnderline(
       child: DropdownButton<T>(
         value: value,
+        isExpanded: isMobile,
         dropdownColor: MobiusColors.panelOf(context),
         borderRadius: BorderRadius.circular(8),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 8),
         icon: Padding(
           padding: const EdgeInsets.only(left: 6),
           child: Icon(
@@ -153,5 +172,18 @@ class SettingsDropdown<T> extends StatelessWidget {
         },
       ),
     );
+
+    if (isMobile) {
+      return Container(
+        height: 42,
+        decoration: BoxDecoration(
+          color: MobiusColors.panelOf(context),
+          border: Border.all(color: MobiusColors.borderOf(context)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: dropdown,
+      );
+    }
+    return dropdown;
   }
 }

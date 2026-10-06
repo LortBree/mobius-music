@@ -445,6 +445,10 @@ fn convert_metadata(source: LoftyEmbeddedMetadata) -> EmbeddedMetadata {
         disc_number: source.disc_number,
 
         artwork: source.artwork,
+
+        track_gain_db: source.track_gain_db,
+
+        track_peak: source.track_peak,
     }
 }
 
@@ -472,6 +476,10 @@ fn normalize_metadata(path: &Path, embedded: &EmbeddedMetadata) -> NormalizedMet
             disc_number: embedded.disc_number,
 
             composer: embedded.composer.clone(),
+
+            track_gain_db: embedded.track_gain_db,
+
+            track_peak: embedded.track_peak,
         },
     }
 }
@@ -617,6 +625,8 @@ mod tests {
             disc_number: Some(1),
 
             artwork: None,
+
+            ..Default::default()
         };
 
         let converted = convert_metadata(source);

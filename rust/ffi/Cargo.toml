@@ -9,3 +9,6 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 offline-player-app-core = { path = "../app-core" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+offline-player-platform-android = { path = "../platform-android" }
