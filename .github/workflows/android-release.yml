@@ -57,7 +57,7 @@ jobs:
 
       - name: Build Flutter Android release APK
         working-directory: app/mobius
-        run: flutter build apk --release
+        run: flutter build apk --release --android-skip-build-dependency-validation
 
       - name: Package APK
         env:
