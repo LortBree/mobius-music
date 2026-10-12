@@ -20,7 +20,7 @@ class _MobiusMetrics {
   static const double collapsedThreshold = 156;
   static const double initialSidebarWidth = 300;
   static const double topBarHeight = 72;
-  static const double miniPlayerHeight = 112;
+  static const double miniPlayerHeight = 100;
   static const double sidebarDividerWidth = 16;
 }
 
@@ -32,6 +32,7 @@ class _NavEntry {
 }
 
 const List<_NavEntry> _kPrimaryNavEntries = [
+  _NavEntry(Icons.home_outlined, 'Home'),
   _NavEntry(Icons.library_music_outlined, 'Library'),
   _NavEntry(Icons.album_outlined, 'Albums'),
   _NavEntry(Icons.person_outline_rounded, 'Artists'),
@@ -185,12 +186,32 @@ class _MobiusShellState extends State<MobiusShell> with PlayerShellState {
                   children: [
                     SizedBox(width: _sidebarWidth, child: _buildSidebar()),
                     _buildSidebarDivider(),
-                    Expanded(child: buildPage(selectedPage)),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: buildPage(selectedPage),
+                          ),
+                          Positioned(
+                            left: 20,
+                            right: 20,
+                            bottom: 16,
+                            child: Center(
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 1100,
+                                ),
+                                child: _buildMiniPlayer(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-            _buildMiniPlayer(),
           ],
         ),
       ),
@@ -346,6 +367,7 @@ class _MobiusShellState extends State<MobiusShell> with PlayerShellState {
       onAddToPlaylist: addCurrentTrackToPlaylist,
       onToggleRepeat: toggleRepeat,
       onOpenQueue: openQueue,
+      onOpenLyrics: openLyrics,
     );
   }
 }

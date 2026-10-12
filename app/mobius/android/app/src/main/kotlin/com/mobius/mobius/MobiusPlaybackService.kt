@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
@@ -30,6 +31,7 @@ class MobiusPlaybackService : MediaSessionService() {
     }
 
     private var mediaSession: MediaSession? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -76,6 +78,22 @@ class MobiusPlaybackService : MediaSessionService() {
         setMediaNotificationProvider(notificationProvider)
 
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Mobius:PlaybackWakeLock")?.apply {
+            setReferenceCounted(false)
+        }
+        PlaybackHolder.updateWakeLock = { isPlaying ->
+            if (isPlaying) {
+                if (wakeLock?.isHeld != true) {
+                    wakeLock?.acquire(24 * 60 * 60 * 1000L)
+                }
+            } else {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -99,6 +117,10 @@ class MobiusPlaybackService : MediaSessionService() {
         // When the user swipes the app away from recent tasks, stop playback completely,
         // dismiss notifications, stop the service, and terminate the process so
         // native Rust audio threads do not orphan.
+        PlaybackHolder.updateWakeLock = null
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
         runCatching { unregisterReceiver(noisyReceiver) }
         mediaSession?.run {
             removeSession(this)
@@ -114,6 +136,10 @@ class MobiusPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        PlaybackHolder.updateWakeLock = null
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
         runCatching { unregisterReceiver(noisyReceiver) }
         mediaSession?.run {
             removeSession(this)

@@ -79,6 +79,8 @@ abstract final class MobiusTheme {
       onPrimary: isDark ? const Color(0xFFFAFAFA) : const Color(0xFFFFF4EA),
       secondary: secondaryColor,
       onSecondary: text,
+      secondaryContainer: primary.withValues(alpha: isDark ? 0.22 : 0.18),
+      onSecondaryContainer: primary,
       surface: surface,
       onSurface: text,
       surfaceContainerHighest: isDark ? const Color(0xFF262432) : const Color(0xFFDED9D0),
@@ -91,6 +93,12 @@ abstract final class MobiusTheme {
       brightness: brightness,
       scaffoldBackgroundColor: background,
       colorScheme: colorScheme,
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: primary,
+          foregroundColor: isDark ? const Color(0xFFFAFAFA) : const Color(0xFFFFF4EA),
+        ),
+      ),
       appBarTheme: AppBarTheme(
         backgroundColor: background,
         foregroundColor: text,

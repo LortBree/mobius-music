@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/ffi/offline_player.dart';
 import '../core/platform/android_media_session.dart';
 import '../features/library/data/ffi_library_repository.dart';
+import '../features/onboarding/presentation/onboarding_page.dart';
 import 'adaptive_shell.dart';
 import 'theme/mobius_theme.dart';
 import '../playback/playback_settings.dart';
@@ -41,6 +42,7 @@ class _MobiusAppState extends State<MobiusApp> {
 
   ThemeMode _themeMode = ThemeMode.dark;
   bool _isReady = false;
+  bool _isOnboarded = true;
 
   @override
   void initState() {
@@ -61,13 +63,22 @@ class _MobiusAppState extends State<MobiusApp> {
   }
 
   Future<void> _initApp() async {
+    final preferences = await SharedPreferences.getInstance();
+    final onboarded =
+        preferences.getBool(OnboardingPage.onboardingCompletedKey) ?? false;
+    final folders = preferences.getStringList('music_folders') ?? [];
+    final hasFoldersOrOnboarded = onboarded || folders.isNotEmpty;
+
     await Future.wait([
       PlaybackSettings.restore(_playerController),
       _loadThemeMode(),
       Future<void>.delayed(const Duration(milliseconds: 700)),
     ]);
     if (!mounted) return;
-    setState(() => _isReady = true);
+    setState(() {
+      _isOnboarded = hasFoldersOrOnboarded;
+      _isReady = true;
+    });
   }
 
   Future<void> _loadThemeMode() async {
@@ -109,24 +120,32 @@ class _MobiusAppState extends State<MobiusApp> {
         duration: const Duration(milliseconds: 350),
         switchInCurve: Curves.easeOut,
         switchOutCurve: Curves.easeIn,
-        child: _isReady
-            ? AdaptiveShell(
-                key: const ValueKey('adaptive_shell'),
-                repository: _libraryRepository,
-                playerController: _playerController,
-                themeController: ThemeModeController(
-                  mode: _themeMode,
-                  setMode: _setThemeMode,
-                ),
-              )
-            : const Scaffold(
+        child: !_isReady
+            ? const Scaffold(
                 key: ValueKey('startup_loading'),
                 backgroundColor: Colors.black,
                 body: MobiusLoadingView(
                   size: 280,
                   backgroundColor: Colors.black,
                 ),
-              ),
+              )
+            : !_isOnboarded
+                ? OnboardingPage(
+                    key: const ValueKey('onboarding_page'),
+                    repository: _libraryRepository,
+                    onComplete: () {
+                      setState(() => _isOnboarded = true);
+                    },
+                  )
+                : AdaptiveShell(
+                    key: const ValueKey('adaptive_shell'),
+                    repository: _libraryRepository,
+                    playerController: _playerController,
+                    themeController: ThemeModeController(
+                      mode: _themeMode,
+                      setMode: _setThemeMode,
+                    ),
+                  ),
       ),
     );
   }

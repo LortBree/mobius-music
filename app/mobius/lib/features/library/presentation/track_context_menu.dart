@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -599,112 +601,151 @@ class SwipeableQueueTrack extends StatefulWidget {
   State<SwipeableQueueTrack> createState() => _SwipeableQueueTrackState();
 }
 
-class _SwipeableQueueTrackState extends State<SwipeableQueueTrack> {
+class _SwipeableQueueTrackState extends State<SwipeableQueueTrack>
+    with SingleTickerProviderStateMixin {
+  static const double _dragResistance = 0.78;
+  static const double _queueThreshold = 0.70;
+
+  late final AnimationController _slideController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+    reverseDuration: const Duration(milliseconds: 280),
+  );
   bool _thresholdReached = false;
-  double _dragProgress = 0.0;
+
+  @override
+  void dispose() {
+    _slideController.dispose();
+    super.dispose();
+  }
+
+  void _onDragStart(DragStartDetails details) {
+    _slideController.stop();
+    if (_thresholdReached) setState(() => _thresholdReached = false);
+  }
+
+  void _onDragUpdate(DragUpdateDetails details, double maxSlide) {
+    final nextValue = (_slideController.value +
+            (details.delta.dx / maxSlide) * _dragResistance)
+        .clamp(0.0, 1.0)
+        .toDouble();
+    _slideController.value = nextValue;
+
+    final reached = nextValue >= _queueThreshold;
+    if (reached != _thresholdReached) {
+      setState(() => _thresholdReached = reached);
+      if (reached) HapticFeedback.selectionClick();
+    }
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (_slideController.value >= _queueThreshold) {
+      _addToQueue();
+    }
+    _settleBack();
+  }
+
+  void _settleBack() {
+    _slideController
+        .animateBack(0, curve: Curves.easeOutCubic)
+        .whenComplete(() {
+          if (mounted && _thresholdReached) {
+            setState(() => _thresholdReached = false);
+          }
+        });
+  }
+
+  void _addToQueue() {
+    widget.playerController.addToQueue(widget.track.trackId);
+    widget.onQueued?.call();
+    if (!mounted) return;
+
+    final title = widget.track.title.trim().isEmpty
+        ? 'Track'
+        : widget.track.title.trim();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.queue_music_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Added to queue: $title',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
 
   @override
   Widget build(BuildContext context) {
     final accent = MobiusColors.accentOf(context);
-    final isSwiping = _dragProgress > 0.02;
-
-    return Dismissible(
-      key: ValueKey('swipe-queue-${widget.key ?? widget.track.trackId}'),
-      direction: DismissDirection.startToEnd,
-      dismissThresholds: const {
-        DismissDirection.startToEnd: 0.28,
-      },
-      onUpdate: (details) {
-        final progress = details.progress;
-        final reached = details.reached;
-        if (progress != _dragProgress || reached != _thresholdReached) {
-          setState(() {
-            _dragProgress = progress;
-            if (reached && !_thresholdReached) {
-              _thresholdReached = true;
-              HapticFeedback.mediumImpact();
-            } else if (!reached && _thresholdReached) {
-              _thresholdReached = false;
-            }
-          });
-        }
-      },
-      confirmDismiss: (direction) async {
-        if (direction == DismissDirection.startToEnd) {
-          widget.playerController.addToQueue(widget.track.trackId);
-          HapticFeedback.lightImpact();
-          widget.onQueued?.call();
-          if (context.mounted) {
-            final title = widget.track.title.trim().isEmpty ? 'Track' : widget.track.title.trim();
-            ScaffoldMessenger.of(context)
-              ..hideCurrentSnackBar()
-              ..showSnackBar(
-                SnackBar(
-                  content: Row(
-                    children: [
-                      const Icon(Icons.queue_music_rounded, color: Colors.white, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Added to queue: $title',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxSlide = math.max(
+          1.0,
+          math.min(96.0, constraints.maxWidth * 0.26),
+        ).toDouble();
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _slideController,
+                  builder: (context, child) {
+                    final progress = _slideController.value;
+                    return Container(
+                      color: Colors.transparent,
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.only(left: 24),
+                      child: Opacity(
+                        opacity: progress.clamp(0.0, 1.0).toDouble(),
+                        child: Transform.scale(
+                          scale: 0.82 + (0.18 * progress),
+                          child: Icon(
+                            Icons.queue_music_rounded,
+                            color: accent,
+                            size: 25,
+                          ),
                         ),
                       ),
-                    ],
+                    );
+                  },
+                ),
+              ),
+              GestureDetector(
+                key: ValueKey(
+                  'swipe-queue-${widget.key ?? widget.track.trackId}',
+                ),
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragStart: _onDragStart,
+                onHorizontalDragUpdate: (details) =>
+                    _onDragUpdate(details, maxSlide),
+                onHorizontalDragEnd: _onDragEnd,
+                onHorizontalDragCancel: _settleBack,
+                child: AnimatedBuilder(
+                  animation: _slideController,
+                  builder: (context, child) => Transform.translate(
+                    offset: Offset(maxSlide * _slideController.value, 0),
+                    child: child,
                   ),
-                  duration: const Duration(seconds: 2),
-                  behavior: SnackBarBehavior.floating,
+                  child: widget.child,
                 ),
-              );
-          }
-        }
-        setState(() {
-          _thresholdReached = false;
-          _dragProgress = 0.0;
-        });
-        return false; // Crucial: smoothly springs back into the list
+              ),
+            ],
+          ),
+        );
       },
-      background: isSwiping
-          ? Container(
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              decoration: BoxDecoration(
-                color: _thresholdReached
-                    ? accent
-                    : accent.withValues(alpha: 0.70),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: AnimatedScale(
-                scale: _thresholdReached ? 1.15 : 1.0,
-                duration: const Duration(milliseconds: 150),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.queue_music_rounded,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                    SizedBox(width: 10),
-                    Text(
-                      'Add to queue',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          : const SizedBox.shrink(),
-      child: Material(
-        color: isSwiping ? MobiusColors.backgroundOf(context) : Colors.transparent,
-        child: widget.child,
-      ),
     );
   }
 }

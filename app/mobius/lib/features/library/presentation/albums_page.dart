@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/colors.dart';
@@ -7,6 +9,7 @@ import '../../../playback/player_controller.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../data/user_collections.dart';
 import 'group_artwork.dart';
+import 'mobile_detail_scaffold.dart';
 import 'track_context_menu.dart';
 import 'track_list_row.dart';
 
@@ -179,13 +182,36 @@ class AlbumsPageState extends State<AlbumsPage> {
   }
 
   void _openAlbum(_AlbumEntry album) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (isMobile) {
+      Navigator.of(context).push(
+        mobileDetailRoute<void>(
+          builder: (routeContext) => MobileDetailScaffold(
+            title: album.title,
+            bodyBuilder: (isCollapsed) => _AlbumDetailPage(
+              album: album,
+              playerController: widget.playerController,
+              repository: widget.repository,
+              collections: widget.collections,
+              onLibraryChanged: widget.onLibraryChanged,
+              onGoToArtist: widget.onGoToArtist,
+              onGoToAlbum: widget.onGoToAlbum,
+              onBack: () => Navigator.of(routeContext).pop(),
+              isCollapsed: isCollapsed,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _selectedAlbum = album);
   }
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final selectedAlbum = _selectedAlbum;
-    if (selectedAlbum != null) {
+    if (!isMobile && selectedAlbum != null) {
       return _AlbumDetailPage(
         album: selectedAlbum,
         playerController: widget.playerController,
@@ -221,12 +247,14 @@ class AlbumsPageState extends State<AlbumsPage> {
       return Center(
         child: Text(
           'No albums found.',
-          style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 15),
+          style: TextStyle(
+            color: MobiusColors.textDimOf(context),
+            fontSize: 15,
+          ),
         ),
       );
     }
 
-    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     if (isMobile) {
       // Mobile: no internal page title (the Library tab owns it); a 2-column
       // grid of rounded covers with the track-count chip overlaid.
@@ -285,6 +313,7 @@ class AlbumsPageState extends State<AlbumsPage> {
               mainAxisSpacing: 30,
             ),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 124)),
         ],
       ),
     );
@@ -323,21 +352,21 @@ class _AlbumCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               AspectRatio(
-                  aspectRatio: 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: MobiusColors.panelOf(context),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: GroupArtwork(
-                      repository: repository,
-                      source: album.artwork,
-                      decodeSize: 440,
-                      filterQuality: FilterQuality.medium,
-                      placeholder: const _ArtworkPlaceholder(),
-                    ),
+                aspectRatio: 1,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: MobiusColors.panelOf(context),
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  clipBehavior: Clip.antiAlias,
+                  child: GroupArtwork(
+                    repository: repository,
+                    source: album.artwork,
+                    decodeSize: 440,
+                    filterQuality: FilterQuality.medium,
+                    placeholder: const _ArtworkPlaceholder(),
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               Text(
@@ -355,7 +384,10 @@ class _AlbumCard extends StatelessWidget {
                 album.artist.isEmpty ? 'Unknown Artist' : album.artist,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
+                style: TextStyle(
+                  color: MobiusColors.textDimOf(context),
+                  fontSize: 13,
+                ),
               ),
             ],
           ),
@@ -371,7 +403,11 @@ class _ArtworkPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Icon(Icons.album_outlined, size: 54, color: MobiusColors.accentOf(context)),
+      child: Icon(
+        Icons.album_outlined,
+        size: 54,
+        color: MobiusColors.accentOf(context),
+      ),
     );
   }
 }
@@ -393,12 +429,10 @@ class _MobileAlbumCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Column(
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             AspectRatio(
@@ -472,8 +506,7 @@ class _MobileAlbumCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -487,6 +520,7 @@ class _AlbumDetailPage extends StatefulWidget {
     required this.onGoToArtist,
     required this.onGoToAlbum,
     required this.onBack,
+    this.isCollapsed,
   });
 
   final _AlbumEntry album;
@@ -497,28 +531,37 @@ class _AlbumDetailPage extends StatefulWidget {
   final ValueChanged<String> onGoToArtist;
   final ValueChanged<TrackMetadata> onGoToAlbum;
   final VoidCallback onBack;
+  final ValueListenable<bool>? isCollapsed;
 
   @override
   State<_AlbumDetailPage> createState() => _AlbumDetailPageState();
 }
 
 class _AlbumDetailPageState extends State<_AlbumDetailPage> {
-  late final List<TrackMetadata> _tracks = widget.album.trackIds
-      .map((id) {
-        try {
-          return widget.repository.getTrackMetadata(id);
-        } catch (_) {
-          return null;
-        }
-      })
-      .whereType<TrackMetadata>()
-      .toList();
+  final List<TrackMetadata> _tracks = [];
+  bool _tracksLoaded = false;
 
   @override
   void initState() {
     super.initState();
     widget.playerController.commands.addListener(_onPlayerCommand);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadTracks());
+    });
   }
+
+  Future<void> _loadTracks() => loadTrackMetadataInBatches(
+    repository: widget.repository,
+    trackIds: widget.album.trackIds,
+    isActive: () => mounted,
+    onBatch: (batch, isComplete) {
+      if (!mounted) return;
+      setState(() {
+        _tracks.addAll(batch);
+        _tracksLoaded = isComplete;
+      });
+    },
+  );
 
   @override
   void dispose() {
@@ -560,10 +603,12 @@ class _AlbumDetailPageState extends State<_AlbumDetailPage> {
     }
   }
 
-  void _play(int index) {
+  Future<void> _play(int index) async {
     try {
-      widget.playerController.setQueue(widget.album.trackIds);
-      widget.playerController.selectAndPlay(index);
+      await widget.playerController.setQueueAndPlay(
+        widget.album.trackIds,
+        index,
+      );
     } catch (error) {
       _showError(error);
     }
@@ -578,13 +623,175 @@ class _AlbumDetailPageState extends State<_AlbumDetailPage> {
       ..showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
+  Widget _buildTrackList(
+    BuildContext context, {
+    required int currentTrackId,
+    required bool showDiscHeaders,
+    required String albumArtistLower,
+    required bool isMobile,
+  }) {
+    int? renderedDisc;
+    return ListView.builder(
+      padding: isMobile
+          ? const EdgeInsets.fromLTRB(8, 6, 8, 90)
+          : const EdgeInsets.only(bottom: 124),
+      itemCount: _tracks.length + (_tracksLoaded ? 0 : 1),
+      itemBuilder: (context, index) {
+        if (index >= _tracks.length) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final metadata = _tracks[index];
+        final trackId = metadata.trackId;
+        final isCurrent = trackId == currentTrackId;
+        final displayNumber = metadata.trackNumber > 0
+            ? metadata.trackNumber
+            : index + 1;
+        final trackArtist = metadata.artist.trim();
+        final subtitle =
+            trackArtist.isNotEmpty &&
+                trackArtist.toLowerCase() != albumArtistLower
+            ? trackArtist
+            : null;
+
+        void showTrackMenu() => TrackContextMenu.showForTrack(
+          context: context,
+          position: Offset.zero,
+          track: metadata,
+          repository: widget.repository,
+          collections: widget.collections,
+          playerController: widget.playerController,
+          removeLabel: 'Remove from Library',
+          onRemove: () async {
+            await widget.collections.removeFromLibrary(trackId);
+            widget.onLibraryChanged();
+          },
+          onChanged: widget.onLibraryChanged,
+          onGoToArtist: trackArtistName(metadata).isEmpty
+              ? null
+              : () => widget.onGoToArtist(trackArtistName(metadata)),
+          onGoToAlbum: metadata.album.trim().isEmpty
+              ? null
+              : () => widget.onGoToAlbum(metadata),
+        );
+
+        final trackRow = isMobile
+            ? MobileDetailTrackRow(
+                key: ValueKey(trackId),
+                title: metadata.title,
+                subtitle: trackArtist.isEmpty
+                    ? widget.album.artist
+                    : trackArtist,
+                artwork: GroupArtwork(
+                  repository: widget.repository,
+                  source: widget.album.artwork,
+                  decodeSize: 88,
+                  filterQuality: FilterQuality.medium,
+                  placeholder: const _ArtworkPlaceholder(),
+                ),
+                isCurrent: isCurrent,
+                onPlay: () => _play(widget.album.trackIds.indexOf(trackId)),
+                onMore: showTrackMenu,
+              )
+            : TrackListRow(
+                key: ValueKey(trackId),
+                trackNumber: displayNumber,
+                title: metadata.title,
+                artistSubtitle: subtitle,
+                isCurrent: isCurrent,
+                duration: _currentDuration(isCurrent),
+                onPlay: () => _play(widget.album.trackIds.indexOf(trackId)),
+                onMore: showTrackMenu,
+              );
+
+        final row = TrackContextMenu(
+          key: ValueKey('context-$trackId'),
+          track: metadata,
+          repository: widget.repository,
+          collections: widget.collections,
+          playerController: widget.playerController,
+          removeLabel: 'Remove from Library',
+          onRemove: () async {
+            await widget.collections.removeFromLibrary(trackId);
+            widget.onLibraryChanged();
+          },
+          onChanged: widget.onLibraryChanged,
+          onGoToArtist: trackArtistName(metadata).isEmpty
+              ? null
+              : () => widget.onGoToArtist(trackArtistName(metadata)),
+          onGoToAlbum: metadata.album.trim().isEmpty
+              ? null
+              : () => widget.onGoToAlbum(metadata),
+          child: trackRow,
+        );
+
+        if (showDiscHeaders &&
+            metadata.hasDiscNumber &&
+            metadata.discNumber != renderedDisc) {
+          renderedDisc = metadata.discNumber;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TrackListDiscHeader(discNumber: metadata.discNumber),
+              row,
+            ],
+          );
+        }
+        return row;
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final currentTrackId = _safeCurrentTrackId;
-    final showDiscHeaders = _multiDisc;
+    final showDiscHeaders = _tracksLoaded && _multiDisc;
     final albumArtistLower = _albumArtist.toLowerCase();
     int? renderedDisc;
+
+    if (isMobile) {
+      return MobileDetailPage(
+        kind: 'Album',
+        title: widget.album.title,
+        subtitle: widget.album.artist.isEmpty
+            ? 'Unknown Artist'
+            : widget.album.artist,
+        trackCount: widget.album.trackIds.length,
+        artwork: Container(
+          decoration: BoxDecoration(
+            color: MobiusColors.panelOf(context),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: GroupArtwork(
+            repository: widget.repository,
+            source: widget.album.artwork,
+            decodeSize: 220,
+            filterQuality: FilterQuality.medium,
+            placeholder: const _ArtworkPlaceholder(),
+          ),
+        ),
+        isCollapsed: widget.isCollapsed,
+        onPlay: widget.album.trackIds.isEmpty ? null : _playAlbum,
+        trackListBuilder: (context) => _buildTrackList(
+          context,
+          currentTrackId: currentTrackId,
+          showDiscHeaders: showDiscHeaders,
+          albumArtistLower: albumArtistLower,
+          isMobile: true,
+        ),
+      );
+    }
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -619,99 +826,113 @@ class _AlbumDetailPageState extends State<_AlbumDetailPage> {
             const SizedBox(height: 8),
           ],
           if (isMobile) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Container(
-                  width: 110,
-                  height: 110,
-                  decoration: BoxDecoration(
-                    color: MobiusColors.panelOf(context),
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.35),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+            CollapsibleDetailHeader(
+              isCollapsed: widget.isCollapsed,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 110,
+                        height: 110,
+                        decoration: BoxDecoration(
+                          color: MobiusColors.panelOf(context),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 12,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: GroupArtwork(
+                          repository: widget.repository,
+                          source: widget.album.artwork,
+                          decodeSize: 220,
+                          filterQuality: FilterQuality.medium,
+                          placeholder: const _ArtworkPlaceholder(),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'ALBUM',
+                              style: TextStyle(
+                                color: MobiusColors.accentLightOf(context),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.album.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: MobiusColors.textOf(context),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.album.artist.isEmpty
+                                  ? 'Unknown Artist'
+                                  : widget.album.artist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: MobiusColors.textDimOf(context),
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${widget.album.trackIds.length} tracks',
+                              style: TextStyle(
+                                color: MobiusColors.textDimOf(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: GroupArtwork(
-                    repository: widget.repository,
-                    source: widget.album.artwork,
-                    decodeSize: 220,
-                    filterQuality: FilterQuality.medium,
-                    placeholder: const _ArtworkPlaceholder(),
+                  const SizedBox(height: 14),
+                ],
+              ),
+            ),
+            Row(
+              children: [
+                FilledButton.icon(
+                  onPressed: _tracks.isEmpty ? null : _playAlbum,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Play'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: MobiusColors.accentOf(context),
+                    foregroundColor: MobiusColors.onAccentOf(context),
+                    minimumSize: const Size(104, 44),
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'ALBUM',
-                        style: TextStyle(
-                          color: MobiusColors.accentLightOf(context),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.album.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: MobiusColors.textOf(context),
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.album.artist.isEmpty
-                            ? 'Unknown Artist'
-                            : widget.album.artist,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: MobiusColors.textDimOf(context),
-                          fontSize: 13,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${widget.album.trackIds.length} tracks',
-                        style: TextStyle(
-                          color: MobiusColors.textDimOf(context),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
+                const SizedBox(width: 12),
+                Text(
+                  '${_tracks.length} ${_tracks.length == 1 ? 'song' : 'songs'}',
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
+                    fontSize: 13,
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: FilledButton.icon(
-                onPressed: _playAlbum,
-                icon: const Icon(Icons.play_arrow_rounded, size: 22),
-                label: const Text('Play Album'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: MobiusColors.accentOf(context),
-                  foregroundColor: MobiusColors.onAccentOf(context),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
             ),
           ] else ...[
             Row(
@@ -823,37 +1044,84 @@ class _AlbumDetailPageState extends State<_AlbumDetailPage> {
                   onGoToAlbum: metadata.album.trim().isEmpty
                       ? null
                       : () => widget.onGoToAlbum(metadata),
-                  child: TrackListRow(
-                    key: ValueKey(trackId),
-                    trackNumber: displayNumber,
-                    title: metadata.title,
-                    artistSubtitle: subtitle,
-                    isCurrent: isCurrent,
-                    duration: _currentDuration(isCurrent),
-                    onPlay: () => _play(index),
-                    onMore: () {
-                      TrackContextMenu.showForTrack(
-                        context: context,
-                        position: Offset.zero,
-                        track: metadata,
-                        repository: widget.repository,
-                        collections: widget.collections,
-                        playerController: widget.playerController,
-                        removeLabel: 'Remove from Library',
-                        onRemove: () async {
-                          await widget.collections.removeFromLibrary(trackId);
-                          widget.onLibraryChanged();
-                        },
-                        onChanged: widget.onLibraryChanged,
-                        onGoToArtist: trackArtistName(metadata).isEmpty
-                            ? null
-                            : () => widget.onGoToArtist(trackArtistName(metadata)),
-                        onGoToAlbum: metadata.album.trim().isEmpty
-                            ? null
-                            : () => widget.onGoToAlbum(metadata),
-                      );
-                    },
-                  ),
+                  child: isMobile
+                      ? MobileDetailTrackRow(
+                          key: ValueKey(trackId),
+                          title: metadata.title,
+                          subtitle: trackArtist.isEmpty
+                              ? widget.album.artist
+                              : trackArtist,
+                          artwork: GroupArtwork(
+                            repository: widget.repository,
+                            source: GroupArtworkSource([trackId]),
+                            decodeSize: 88,
+                            filterQuality: FilterQuality.medium,
+                            placeholder: const _ArtworkPlaceholder(),
+                          ),
+                          isCurrent: isCurrent,
+                          onPlay: () => _play(index),
+                          onMore: () {
+                            TrackContextMenu.showForTrack(
+                              context: context,
+                              position: Offset.zero,
+                              track: metadata,
+                              repository: widget.repository,
+                              collections: widget.collections,
+                              playerController: widget.playerController,
+                              removeLabel: 'Remove from Library',
+                              onRemove: () async {
+                                await widget.collections.removeFromLibrary(
+                                  trackId,
+                                );
+                                widget.onLibraryChanged();
+                              },
+                              onChanged: widget.onLibraryChanged,
+                              onGoToArtist: trackArtistName(metadata).isEmpty
+                                  ? null
+                                  : () => widget.onGoToArtist(
+                                      trackArtistName(metadata),
+                                    ),
+                              onGoToAlbum: metadata.album.trim().isEmpty
+                                  ? null
+                                  : () => widget.onGoToAlbum(metadata),
+                            );
+                          },
+                        )
+                      : TrackListRow(
+                          key: ValueKey(trackId),
+                          trackNumber: displayNumber,
+                          title: metadata.title,
+                          artistSubtitle: subtitle,
+                          isCurrent: isCurrent,
+                          duration: _currentDuration(isCurrent),
+                          onPlay: () => _play(index),
+                          onMore: () {
+                            TrackContextMenu.showForTrack(
+                              context: context,
+                              position: Offset.zero,
+                              track: metadata,
+                              repository: widget.repository,
+                              collections: widget.collections,
+                              playerController: widget.playerController,
+                              removeLabel: 'Remove from Library',
+                              onRemove: () async {
+                                await widget.collections.removeFromLibrary(
+                                  trackId,
+                                );
+                                widget.onLibraryChanged();
+                              },
+                              onChanged: widget.onLibraryChanged,
+                              onGoToArtist: trackArtistName(metadata).isEmpty
+                                  ? null
+                                  : () => widget.onGoToArtist(
+                                      trackArtistName(metadata),
+                                    ),
+                              onGoToAlbum: metadata.album.trim().isEmpty
+                                  ? null
+                                  : () => widget.onGoToAlbum(metadata),
+                            );
+                          },
+                        ),
                 );
 
                 if (showDiscHeaders &&
@@ -878,4 +1146,3 @@ class _AlbumDetailPageState extends State<_AlbumDetailPage> {
     );
   }
 }
-

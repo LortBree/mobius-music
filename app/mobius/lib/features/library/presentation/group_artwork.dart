@@ -79,16 +79,36 @@ class _GroupArtworkState extends State<GroupArtwork> {
   @override
   void initState() {
     super.initState();
-    _artwork = widget.source.resolve(widget.repository);
+    _resolveAfterFirstFrame();
   }
 
   @override
   void didUpdateWidget(covariant GroupArtwork oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.source, widget.source) ||
+    if (!_sameTrackIds(oldWidget.source.trackIds, widget.source.trackIds) ||
         !identical(oldWidget.repository, widget.repository)) {
-      _artwork = widget.source.resolve(widget.repository);
+      _artwork = null;
+      _resolveAfterFirstFrame();
     }
+  }
+
+  bool _sameTrackIds(List<int> first, List<int> second) {
+    if (identical(first, second)) return true;
+    if (first.length != second.length) return false;
+    for (var i = 0; i < first.length; i++) {
+      if (first[i] != second[i]) return false;
+    }
+    return true;
+  }
+
+  void _resolveAfterFirstFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final artwork = widget.source.resolve(widget.repository);
+      if (mounted && artwork != null) {
+        setState(() => _artwork = artwork);
+      }
+    });
   }
 
   @override

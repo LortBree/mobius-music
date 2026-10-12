@@ -96,6 +96,7 @@ coverage/
 # ---------- Dev plans / architecture notes ----------
 # Planning docs, specs, handoffs and ADRs stay local; only user-facing docs ship.
 docs/
+future-plan.md
 *.md
 !README.md
 !**/README.md

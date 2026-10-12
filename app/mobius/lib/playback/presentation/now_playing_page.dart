@@ -14,6 +14,9 @@ import '../../features/sound/presentation/sound_page.dart';
 import '../playback_time_format.dart';
 import '../../features/library/data/user_collections.dart';
 import '../playback_poller.dart';
+import '../lyrics/flac_lyrics_reader.dart';
+import '../lyrics/lrc_parser.dart';
+import '../lyrics/lyrics_view.dart';
 import 'queue_panel.dart';
 import 'shareable_music_card.dart';
 import 'signal_path_view.dart';
@@ -25,6 +28,7 @@ class NowPlayingPage extends StatefulWidget {
     required this.playerController,
     this.collections,
     this.initialOpenQueue = false,
+    this.initialOpenLyrics = false,
     this.isFavorite = false,
     this.onToggleFavorite,
     this.onAddToPlaylist,
@@ -34,6 +38,7 @@ class NowPlayingPage extends StatefulWidget {
   final PlayerController playerController;
   final UserCollections? collections;
   final bool initialOpenQueue;
+  final bool initialOpenLyrics;
 
   /// Whether the current track is a favorite. The shell owns favorites, so it
   /// passes the value in (and the toggle below out). Null callback => the
@@ -50,6 +55,13 @@ class NowPlayingPage extends StatefulWidget {
 }
 
 class _NowPlayingPageState extends State<NowPlayingPage> {
+  static final Map<String, Color> _albumAccentColorCache = {};
+  static final Map<int, Color> _accentColorCache = {};
+  static final Map<String, ImageProvider> _albumArtworkProviderCache = {};
+  static final Map<int, ImageProvider> _artworkProviderCache = {};
+  static final Map<String, Uint8List> _albumArtworkBytesCache = {};
+  static final Map<int, Uint8List> _artworkBytesCache = {};
+
   late final PlaybackPoller _poller = PlaybackPoller(
     onTick: _tick,
     isActive: () => _state == OfflinePlayerState.playing,
@@ -58,6 +70,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   TrackMetadata? _track;
   ImageProvider? _artworkImage;
   Uint8List? _artworkBytes;
+  Color? _extractedAccent;
   TrackTechnicalInfo? _technicalInfo;
   AudioOutputDecision? _audioOutputDecision;
 
@@ -96,6 +109,49 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
   static const double _minQueueWidth = 280;
   static const double _maxQueueWidth = 520;
 
+  ParsedLyrics? _parsedLyrics;
+  bool _showLyrics = false;
+  int _lyricsTrackId = -1;
+
+  void _toggleLyrics() {
+    setState(() {
+      _showLyrics = !_showLyrics;
+    });
+  }
+
+  void _onSeekToLyric(Duration timestamp) {
+    final seconds = timestamp.inMilliseconds / 1000.0;
+    _onSeekEnd(seconds);
+  }
+
+  Future<void> _loadLyricsForTrack(int trackId) async {
+    if (trackId <= 0) {
+      if (mounted) setState(() => _parsedLyrics = null);
+      return;
+    }
+    if (_lyricsTrackId == trackId && _parsedLyrics != null) return;
+    _lyricsTrackId = trackId;
+
+    final path = widget.playerController.currentTrackPath;
+    if (path.isEmpty) {
+      if (mounted) setState(() => _parsedLyrics = null);
+      return;
+    }
+
+    try {
+      final rawLyrics = await FlacLyricsReader.readLyrics(path);
+      final parsed =
+          rawLyrics != null ? ParsedLyrics.parse(rawLyrics) : null;
+      if (mounted && _currentTrackId == trackId) {
+        setState(() => _parsedLyrics = parsed);
+      }
+    } catch (_) {
+      if (mounted && _currentTrackId == trackId) {
+        setState(() => _parsedLyrics = null);
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -104,6 +160,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     _syncPlayer();
     if (_currentTrackId > 0) {
       _loadFavoriteStatus(_currentTrackId);
+      _loadLyricsForTrack(_currentTrackId);
     }
 
     widget.playerController.commands.addListener(_onPlayerCommand);
@@ -111,6 +168,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     _poller.start();
 
     _queueOpen = widget.initialOpenQueue;
+    _showLyrics = widget.initialOpenLyrics;
     _refreshSignalPath();
   }
 
@@ -153,7 +211,7 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     _positionNotifier.value = 0;
     setState(() {
       _track = track;
-      _loadArtworkForTrack(trackId);
+      _loadArtworkForTrack(trackId, track: track);
     });
     _loadFavoriteStatus(trackId);
   }
@@ -177,10 +235,65 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     _refreshSignalPath();
   }
 
-  void _loadArtworkForTrack(int trackId) {
+  static String _resolveAlbumKey(TrackMetadata? metadata, int trackId) {
+    if (metadata != null &&
+        metadata.album.trim().isNotEmpty &&
+        metadata.artist.trim().isNotEmpty) {
+      return '${metadata.artist.trim().toLowerCase()} - ${metadata.album.trim().toLowerCase()}';
+    }
+    return 'track_$trackId';
+  }
+
+  void _loadArtworkForTrack(int trackId, {TrackMetadata? track}) {
     if (trackId <= 0) {
       _artworkImage = null;
       _artworkBytes = null;
+      _extractedAccent = null;
+      return;
+    }
+
+    TrackMetadata? metadata = track ?? _track;
+    if (metadata == null || metadata.trackId != trackId) {
+      try {
+        metadata = widget.repository.getTrackMetadata(trackId);
+      } catch (_) {
+        metadata = null;
+      }
+    }
+
+    final albumKey = _resolveAlbumKey(metadata, trackId);
+
+    if (_albumAccentColorCache.containsKey(albumKey)) {
+      _extractedAccent = _albumAccentColorCache[albumKey];
+    } else if (_accentColorCache.containsKey(trackId)) {
+      _extractedAccent = _accentColorCache[trackId];
+    }
+
+    if (_albumArtworkProviderCache.containsKey(albumKey)) {
+      _artworkImage = _albumArtworkProviderCache[albumKey];
+      _artworkBytes = _albumArtworkBytesCache[albumKey];
+      if (!_albumAccentColorCache.containsKey(albumKey) &&
+          !_accentColorCache.containsKey(trackId) &&
+          _artworkBytes != null) {
+        unawaited(_extractColorFromArtwork(trackId, albumKey, _artworkBytes));
+      }
+      return;
+    }
+
+    if (_artworkProviderCache.containsKey(trackId)) {
+      _artworkImage = _artworkProviderCache[trackId];
+      _artworkBytes = _artworkBytesCache[trackId];
+      if (_artworkImage != null) {
+        _albumArtworkProviderCache[albumKey] = _artworkImage!;
+      }
+      if (_artworkBytes != null) {
+        _albumArtworkBytesCache[albumKey] = _artworkBytes!;
+      }
+      if (!_albumAccentColorCache.containsKey(albumKey) &&
+          !_accentColorCache.containsKey(trackId) &&
+          _artworkBytes != null) {
+        unawaited(_extractColorFromArtwork(trackId, albumKey, _artworkBytes));
+      }
       return;
     }
 
@@ -190,19 +303,63 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       if (artwork == null || artwork.data.isEmpty) {
         _artworkImage = null;
         _artworkBytes = null;
+        _extractedAccent = null;
         return;
       }
 
       _artworkBytes = artwork.data;
-      _artworkImage = ResizeImage(
+      _artworkBytesCache[trackId] = artwork.data;
+      _albumArtworkBytesCache[albumKey] = artwork.data;
+      final provider = ResizeImage(
         MemoryImage(artwork.data),
         width: 960,
         height: 960,
       );
+      _artworkImage = provider;
+      _artworkProviderCache[trackId] = provider;
+      _albumArtworkProviderCache[albumKey] = provider;
+
+      if (!_albumAccentColorCache.containsKey(albumKey) &&
+          !_accentColorCache.containsKey(trackId)) {
+        unawaited(_extractColorFromArtwork(trackId, albumKey, artwork.data));
+      }
     } catch (_) {
       _artworkImage = null;
       _artworkBytes = null;
+      _extractedAccent = null;
     }
+  }
+
+  Future<void> _extractColorFromArtwork(
+    int trackId,
+    String albumKey,
+    Uint8List? bytes,
+  ) async {
+    if (bytes == null || bytes.isEmpty) {
+      if (mounted && _extractedAccent != null) {
+        setState(() => _extractedAccent = null);
+      }
+      return;
+    }
+    try {
+      final scheme = await ColorScheme.fromImageProvider(
+        provider: MemoryImage(bytes),
+        brightness: Brightness.dark,
+      );
+      _albumAccentColorCache[albumKey] = scheme.primary;
+      _accentColorCache[trackId] = scheme.primary;
+      if (mounted && _currentTrackId == trackId) {
+        setState(() => _extractedAccent = scheme.primary);
+      }
+    } catch (_) {
+      // Fallback cleanly
+    }
+  }
+
+  Color _getTopGradientColor(Color accent) {
+    final hsl = HSLColor.fromColor(accent);
+    final tunedHsl = hsl.withLightness(hsl.lightness.clamp(0.18, 0.32));
+    return tunedHsl.toColor();
   }
 
   void _loadFavoriteStatus(int trackId) {
@@ -259,9 +416,6 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
       AudioOutputDecision? audioOutputDecision = _audioOutputDecision;
 
       if (currentTrackId != _currentTrackId) {
-        _loadArtworkForTrack(currentTrackId);
-        _loadFavoriteStatus(currentTrackId);
-
         if (currentTrackId > 0) {
           try {
             track = widget.repository.getTrackMetadata(currentTrackId);
@@ -285,6 +439,10 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
           technicalInfo = null;
           audioOutputDecision = null;
         }
+
+        _loadArtworkForTrack(currentTrackId, track: track);
+        _loadFavoriteStatus(currentTrackId);
+        _loadLyricsForTrack(currentTrackId);
       }
 
       if (!mounted) {
@@ -594,6 +752,16 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
             onPressed: _openShareCard,
           ),
           IconButton(
+            tooltip: _showLyrics ? 'Hide lyrics' : 'Lyrics',
+            icon: Icon(
+              _showLyrics ? Icons.lyrics_rounded : Icons.lyrics_outlined,
+            ),
+            color: _showLyrics
+                ? MobiusColors.accentLightOf(context)
+                : MobiusColors.textOf(context),
+            onPressed: _toggleLyrics,
+          ),
+          IconButton(
             tooltip: _queueOpen ? 'Hide queue' : 'Show queue',
             onPressed: _toggleQueue,
             color: _queueOpen
@@ -612,242 +780,65 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
               Expanded(
                 child: LayoutBuilder(
                   builder: (context, constraints) {
+                    if (_showLyrics && constraints.maxWidth >= 780) {
+                      return Padding(
+                        padding: const EdgeInsets.fromLTRB(36, 16, 36, 24),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child: SingleChildScrollView(
+                                child: _buildDesktopPlayerControls(
+                                  track: track,
+                                  technicalInfo: technicalInfo,
+                                  audioOutputDecision: audioOutputDecision,
+                                  maxValue: maxValue,
+                                  artworkSize: 260,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 36),
+                            Expanded(
+                              flex: 6,
+                              child: Container(
+                                height: constraints.maxHeight - 48,
+                                decoration: BoxDecoration(
+                                  color: MobiusColors.panelOf(context).withValues(alpha: 0.4),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: MobiusColors.borderOf(context).withValues(alpha: 0.3),
+                                  ),
+                                ),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: LyricsView(
+                                    lyrics: _parsedLyrics,
+                                    positionNotifier: _positionNotifier,
+                                    accentColor: _extractedAccent,
+                                    onSeek: _onSeekToLyric,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
                     return SingleChildScrollView(
                       padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
                       child: ConstrainedBox(
                         constraints: BoxConstraints(
                           minHeight: constraints.maxHeight - 56,
                         ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _Artwork(size: 320, image: _artworkImage),
-
-                            const SizedBox(height: 32),
-
-                            Text(
-                              track?.title.isNotEmpty == true
-                                  ? track!.title
-                                  : 'Nothing playing',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: MobiusColors.textOf(context),
-                                fontSize: 26,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-
-                            const SizedBox(height: 8),
-
-                            Text(
-                              track?.artist.isNotEmpty == true
-                                  ? track!.artist
-                                  : 'Unknown artist',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: MobiusColors.textDimOf(context),
-                                fontSize: 16,
-                              ),
-                            ),
-
-                            const SizedBox(height: 4),
-
-                            Text(
-                              track?.album.isNotEmpty == true
-                                  ? track!.album
-                                  : 'Unknown album',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: MobiusColors.textDimOf(context),
-                                fontSize: 14,
-                              ),
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            if (technicalInfo != null)
-                              _TechnicalInfo(
-                                technicalInfo: technicalInfo,
-                                formatSampleRate: _formatSampleRate,
-                                formatChannels: _formatChannels,
-                              ),
-
-                            if (audioOutputDecision != null) ...[
-                              const SizedBox(height: 8),
-                              _AudioOutputInfo(decision: audioOutputDecision),
-                            ],
-
-                            const SizedBox(height: 24),
-
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 760),
-                              child: ValueListenableBuilder<double>(
-                                valueListenable: _positionNotifier,
-                                builder: (context, position, _) => _SeekBar(
-                                  value: position.clamp(0.0, maxValue),
-                                  duration: _duration,
-                                  enabled: _duration > 0 && _totalFrames > 0,
-                                  onChanged: _onSeekChanged,
-                                  onChangeEnd: _onSeekEnd,
-                                  formatTime: _formatTime,
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 4),
-
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 760),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 4,
-                                ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    ValueListenableBuilder<double>(
-                                      valueListenable: _positionNotifier,
-                                      builder: (context, position, _) => Text(
-                                        _formatTime(position),
-                                        style: TextStyle(
-                                          color: MobiusColors.textDimOf(
-                                            context,
-                                          ),
-                                          fontSize: 12,
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                    Text(
-                                      _formatTime(_duration),
-                                      style: TextStyle(
-                                        color: MobiusColors.textDimOf(context),
-                                        fontSize: 12,
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Previous',
-                                  onPressed:
-                                      widget.playerController.queueLength > 0
-                                      ? _previous
-                                      : null,
-                                  iconSize: 28,
-                                  color: MobiusColors.textOf(context),
-                                  icon: const Icon(Icons.skip_previous),
-                                ),
-
-                                const SizedBox(width: 16),
-
-                                SizedBox(
-                                  width: 64,
-                                  height: 64,
-                                  child: IconButton(
-                                    tooltip:
-                                        _state == OfflinePlayerState.playing
-                                        ? 'Pause'
-                                        : 'Play',
-                                    onPressed: _togglePlayback,
-                                    iconSize: 38,
-                                    color: MobiusColors.onAccentOf(context),
-                                    style: IconButton.styleFrom(
-                                      backgroundColor: MobiusColors.accentOf(
-                                        context,
-                                      ),
-                                    ),
-                                    icon: Icon(
-                                      _state == OfflinePlayerState.playing
-                                          ? Icons.pause
-                                          : Icons.play_arrow,
-                                    ),
-                                  ),
-                                ),
-
-                                const SizedBox(width: 16),
-
-                                IconButton(
-                                  tooltip: 'Next',
-                                  onPressed:
-                                      widget.playerController.queueLength > 0
-                                      ? _next
-                                      : null,
-                                  iconSize: 28,
-                                  color: MobiusColors.textOf(context),
-                                  icon: const Icon(Icons.skip_next),
-                                ),
-                              ],
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                IconButton(
-                                  tooltip: _repeatLabel(),
-                                  onPressed: _cycleRepeatMode,
-                                  color:
-                                      _repeatMode == OfflinePlayerRepeatMode.off
-                                      ? MobiusColors.textDimOf(context)
-                                      : MobiusColors.accentLightOf(context),
-                                  icon: Icon(_repeatIcon()),
-                                ),
-
-                                const SizedBox(width: 12),
-
-                                OutlinedButton.icon(
-                                  onPressed: _toggleQueue,
-                                  icon: const Icon(Icons.queue_music, size: 18),
-                                  label: const Text('Queue'),
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: MobiusColors.textOf(
-                                      context,
-                                    ),
-                                    side: BorderSide(
-                                      color: MobiusColors.borderOf(context),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            Text(
-                              switch (_state) {
-                                OfflinePlayerState.playing => 'Playing',
-                                OfflinePlayerState.paused => 'Paused',
-                                OfflinePlayerState.loaded => 'Loaded',
-                                OfflinePlayerState.stopped => 'Stopped',
-                                OfflinePlayerState.idle => 'Idle',
-                              },
-                              style: TextStyle(
-                                color: MobiusColors.textDimOf(context),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
+                        child: _buildDesktopPlayerControls(
+                          track: track,
+                          technicalInfo: technicalInfo,
+                          audioOutputDecision: audioOutputDecision,
+                          maxValue: maxValue,
+                          artworkSize: 320,
                         ),
                       ),
                     );
@@ -875,6 +866,213 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     );
   }
 
+  Widget _buildDesktopPlayerControls({
+    required TrackMetadata? track,
+    required TrackTechnicalInfo? technicalInfo,
+    required AudioOutputDecision? audioOutputDecision,
+    required double maxValue,
+    required double artworkSize,
+  }) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _Artwork(size: artworkSize, image: _artworkImage),
+        SizedBox(height: artworkSize < 300 ? 20 : 32),
+        Text(
+          track?.title.isNotEmpty == true ? track!.title : 'Nothing playing',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: MobiusColors.textOf(context),
+            fontSize: artworkSize < 300 ? 22 : 26,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          track?.artist.isNotEmpty == true ? track!.artist : 'Unknown artist',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: MobiusColors.textDimOf(context),
+            fontSize: artworkSize < 300 ? 14 : 16,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          track?.album.isNotEmpty == true ? track!.album : 'Unknown album',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: MobiusColors.textDimOf(context),
+            fontSize: artworkSize < 300 ? 13 : 14,
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (technicalInfo != null)
+          _TechnicalInfo(
+            technicalInfo: technicalInfo,
+            formatSampleRate: _formatSampleRate,
+            formatChannels: _formatChannels,
+          ),
+        if (audioOutputDecision != null) ...[
+          const SizedBox(height: 8),
+          _AudioOutputInfo(decision: audioOutputDecision),
+        ],
+        const SizedBox(height: 20),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ValueListenableBuilder<double>(
+            valueListenable: _positionNotifier,
+            builder: (context, position, _) => _SeekBar(
+              value: position.clamp(0.0, maxValue),
+              duration: _duration,
+              enabled: _duration > 0 && _totalFrames > 0,
+              onChanged: _onSeekChanged,
+              onChangeEnd: _onSeekEnd,
+              formatTime: _formatTime,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                ValueListenableBuilder<double>(
+                  valueListenable: _positionNotifier,
+                  builder: (context, position, _) => Text(
+                    _formatTime(position),
+                    style: TextStyle(
+                      color: MobiusColors.textDimOf(context),
+                      fontSize: 12,
+                      fontFeatures: const [
+                        FontFeature.tabularFigures(),
+                      ],
+                    ),
+                  ),
+                ),
+                Text(
+                  _formatTime(_duration),
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
+                    fontSize: 12,
+                    fontFeatures: const [
+                      FontFeature.tabularFigures(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              tooltip: 'Previous',
+              onPressed: widget.playerController.queueLength > 0 ? _previous : null,
+              iconSize: 28,
+              color: MobiusColors.textOf(context),
+              icon: const Icon(Icons.skip_previous),
+            ),
+            const SizedBox(width: 16),
+            SizedBox(
+              width: 60,
+              height: 60,
+              child: IconButton(
+                tooltip: _state == OfflinePlayerState.playing ? 'Pause' : 'Play',
+                onPressed: _togglePlayback,
+                iconSize: 36,
+                color: MobiusColors.onAccentOf(context),
+                style: IconButton.styleFrom(
+                  backgroundColor: MobiusColors.accentOf(context),
+                ),
+                icon: Icon(
+                  _state == OfflinePlayerState.playing ? Icons.pause : Icons.play_arrow,
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            IconButton(
+              tooltip: 'Next',
+              onPressed: widget.playerController.queueLength > 0 ? _next : null,
+              iconSize: 28,
+              color: MobiusColors.textOf(context),
+              icon: const Icon(Icons.skip_next),
+            ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              tooltip: _repeatLabel(),
+              onPressed: _cycleRepeatMode,
+              color: _repeatMode == OfflinePlayerRepeatMode.off
+                  ? MobiusColors.textDimOf(context)
+                  : MobiusColors.accentLightOf(context),
+              icon: Icon(_repeatIcon()),
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _toggleQueue,
+              icon: const Icon(Icons.queue_music, size: 18),
+              label: const Text('Queue'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: MobiusColors.textOf(context),
+                side: BorderSide(
+                  color: MobiusColors.borderOf(context),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _toggleLyrics,
+              icon: Icon(
+                _showLyrics ? Icons.music_note_rounded : Icons.lyrics_rounded,
+                size: 18,
+              ),
+              label: Text(_showLyrics ? 'Artwork' : 'Lyrics'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _showLyrics
+                    ? (_extractedAccent ?? MobiusColors.accentLightOf(context))
+                    : MobiusColors.textOf(context),
+                side: BorderSide(
+                  color: _showLyrics
+                      ? (_extractedAccent ?? MobiusColors.accentLightOf(context))
+                      : MobiusColors.borderOf(context),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text(
+          switch (_state) {
+            OfflinePlayerState.playing => 'Playing',
+            OfflinePlayerState.paused => 'Paused',
+            OfflinePlayerState.loaded => 'Loaded',
+            OfflinePlayerState.stopped => 'Stopped',
+            OfflinePlayerState.idle => 'Idle',
+          },
+          style: TextStyle(
+            color: MobiusColors.textDimOf(context),
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+
   // -----------------------------------------------------------------------
   // Mobile layout (Spotify-mobile style). Reuses the same state, poller,
   // seek logic and audio-output decision as the desktop layout.
@@ -884,23 +1082,38 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
     final track = _track;
     final maxValue = _duration > 0 ? _duration : 1.0;
     final hasQueue = widget.playerController.queueLength > 0;
+    const defaultAccent = Color(0xFF181818);
+    final topColor = _getTopGradientColor(_extractedAccent ?? defaultAccent);
 
     return Scaffold(
-      backgroundColor: MobiusColors.backgroundOf(context),
+      backgroundColor: Colors.black,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         foregroundColor: MobiusColors.textOf(context),
         elevation: 0,
+        scrolledUnderElevation: 0,
         // Android Back already pops this pushed route; the chevron is the
         // explicit affordance.
         leading: IconButton(
           tooltip: 'Close',
           icon: const Icon(Icons.keyboard_arrow_down_rounded),
+          iconSize: 28,
           onPressed: () => Navigator.of(context).maybePop(),
         ),
         title: const Text('Now Playing'),
         centerTitle: true,
         actions: [
+          IconButton(
+            tooltip: _showLyrics ? 'Show Artwork' : 'Show Lyrics',
+            icon: Icon(
+              _showLyrics ? Icons.music_note_rounded : Icons.lyrics_rounded,
+            ),
+            color: _showLyrics
+                ? (_extractedAccent ?? MobiusColors.accentLightOf(context))
+                : null,
+            onPressed: _toggleLyrics,
+          ),
           IconButton(
             tooltip: 'Share music card',
             icon: const Icon(Icons.share_rounded),
@@ -908,226 +1121,307 @@ class _NowPlayingPageState extends State<NowPlayingPage> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: const [0.0, 0.45, 1.0],
+            colors: [
+              topColor,
+              Color.lerp(topColor, Colors.black, 0.60)!,
+              const Color(0xFF000000),
+            ],
+          ),
+        ),
+        child: SafeArea(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Center(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final size = constraints.maxWidth.clamp(0.0, 360.0);
-                    return _Artwork(size: size, image: _artworkImage);
-                  },
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 350),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: _showLyrics
+                      ? Padding(
+                          key: const ValueKey('lyrics_screen'),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: LyricsView(
+                            lyrics: _parsedLyrics,
+                            positionNotifier: _positionNotifier,
+                            accentColor: _extractedAccent,
+                            onSeek: _onSeekToLyric,
+                          ),
+                        )
+                      : Center(
+                          key: const ValueKey('artwork_screen'),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 8,
+                            ),
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final size = constraints.maxWidth <
+                                        constraints.maxHeight
+                                    ? constraints.maxWidth
+                                    : constraints.maxHeight;
+                                final clampedSize = size.clamp(0.0, 360.0);
+                                return _Artwork(
+                                  size: clampedSize,
+                                  image: _artworkImage,
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                 ),
               ),
 
-              const SizedBox(height: 28),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
                       children: [
-                        Text(
-                          track?.title.isNotEmpty == true
-                              ? track!.title
-                              : 'Nothing playing',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: MobiusColors.textOf(context),
-                            fontSize: 22,
-                            fontWeight: FontWeight.w700,
+                        if (_showLyrics && _artworkImage != null) ...[
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Image(
+                                image: _artworkImage!,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                        ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              NowPlayingMarqueeTitle(
+                                key: ValueKey(track?.trackId ?? 0),
+                                text: track?.title.isNotEmpty == true
+                                    ? track!.title
+                                    : 'Nothing playing',
+                                style: TextStyle(
+                                  color: MobiusColors.textOf(context),
+                                  fontSize: _showLyrics ? 18 : 22,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                isPlaying: _state == OfflinePlayerState.playing,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                track?.artist.isNotEmpty == true
+                                    ? track!.artist
+                                    : 'Unknown artist',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: MobiusColors.textDimOf(context),
+                                  fontSize: _showLyrics ? 13 : 15,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          tooltip: _isFavorite
+                              ? 'Remove from Favorites'
+                              : 'Add to Favorites',
+                          icon: Icon(
+                            _isFavorite
+                                ? Icons.favorite_rounded
+                                : Icons.favorite_border_rounded,
+                          ),
+                          color: _isFavorite
+                              ? MobiusColors.accentLightOf(context)
+                              : MobiusColors.textDimOf(context),
+                          onPressed: _toggleFavorite,
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    ValueListenableBuilder<SignalPath?>(
+                      valueListenable: _signalPath,
+                      builder: (context, path, _) => SignalPathStrip(
+                        path: path,
+                        onTap: () => _openSignalPathSheet(),
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    ValueListenableBuilder<double>(
+                      valueListenable: _positionNotifier,
+                      builder: (context, position, _) => _SeekBar(
+                        value: position.clamp(0.0, maxValue),
+                        duration: _duration,
+                        enabled: _duration > 0 && _totalFrames > 0,
+                        onChanged: _onSeekChanged,
+                        onChangeEnd: _onSeekEnd,
+                        formatTime: _formatTime,
+                        glowThumb: true,
+                      ),
+                    ),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        ValueListenableBuilder<double>(
+                          valueListenable: _positionNotifier,
+                          builder: (context, position, _) => Text(
+                            _formatTime(position),
+                            style: TextStyle(
+                              color: MobiusColors.textDimOf(context),
+                              fontSize: 12,
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ),
                         Text(
-                          track?.artist.isNotEmpty == true
-                              ? track!.artist
-                              : 'Unknown artist',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          _formatTime(_duration),
                           style: TextStyle(
                             color: MobiusColors.textDimOf(context),
-                            fontSize: 15,
+                            fontSize: 12,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  IconButton(
-                    tooltip: _isFavorite
-                        ? 'Remove from Favorites'
-                        : 'Add to Favorites',
-                    icon: Icon(
-                      _isFavorite
-                          ? Icons.favorite_rounded
-                          : Icons.favorite_border_rounded,
-                    ),
-                    color: _isFavorite
-                        ? MobiusColors.accentLightOf(context)
-                        : MobiusColors.textDimOf(context),
-                    onPressed: _toggleFavorite,
-                  ),
-                ],
-              ),
 
-              const SizedBox(height: 12),
-              ValueListenableBuilder<SignalPath?>(
-                valueListenable: _signalPath,
-                builder: (context, path, _) => SignalPathStrip(
-                  path: path,
-                  onTap: () => _openSignalPathSheet(),
-                ),
-              ),
+                    const SizedBox(height: 12),
 
-              const SizedBox(height: 16),
-
-              ValueListenableBuilder<double>(
-                valueListenable: _positionNotifier,
-                builder: (context, position, _) => _SeekBar(
-                  value: position.clamp(0.0, maxValue),
-                  duration: _duration,
-                  enabled: _duration > 0 && _totalFrames > 0,
-                  onChanged: _onSeekChanged,
-                  onChangeEnd: _onSeekEnd,
-                  formatTime: _formatTime,
-                  glowThumb: true,
-                ),
-              ),
-
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  ValueListenableBuilder<double>(
-                    valueListenable: _positionNotifier,
-                    builder: (context, position, _) => Text(
-                      _formatTime(position),
-                      style: TextStyle(
-                        color: MobiusColors.textDimOf(context),
-                        fontSize: 12,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                  Text(
-                    _formatTime(_duration),
-                    style: TextStyle(
-                      color: MobiusColors.textDimOf(context),
-                      fontSize: 12,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 20),
-
-              // Control row: shuffle · previous · play/pause · next · loop.
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  IconButton(
-                    tooltip: 'Shuffle',
-                    iconSize: 24,
-                    color: MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.shuffle_rounded),
-                    onPressed: null,
-                  ),
-                  IconButton(
-                    tooltip: 'Previous',
-                    iconSize: 32,
-                    color: hasQueue
-                        ? MobiusColors.textOf(context)
-                        : MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.skip_previous_rounded),
-                    onPressed: hasQueue ? _previous : null,
-                  ),
-                  SizedBox(
-                    width: 66,
-                    height: 66,
-                    child: IconButton(
-                      tooltip: _state == OfflinePlayerState.playing
-                          ? 'Pause'
-                          : 'Play',
-                      iconSize: 38,
-                      color: MobiusColors.onAccentOf(context),
-                      style: IconButton.styleFrom(
-                        backgroundColor: MobiusColors.accentOf(context),
-                        elevation: 0,
-                        shadowColor: Colors.transparent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(22),
+                    // Control row: shuffle · previous · play/pause · next · loop.
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        IconButton(
+                          tooltip: 'Shuffle',
+                          iconSize: 24,
+                          color: MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.shuffle_rounded),
+                          onPressed: null,
                         ),
-                      ),
-                      icon: Icon(
-                        _state == OfflinePlayerState.playing
-                            ? Icons.pause_rounded
-                            : Icons.play_arrow_rounded,
-                      ),
-                      onPressed: _togglePlayback,
+                        IconButton(
+                          tooltip: 'Previous',
+                          iconSize: 32,
+                          color: hasQueue
+                              ? MobiusColors.textOf(context)
+                              : MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.skip_previous_rounded),
+                          onPressed: hasQueue ? _previous : null,
+                        ),
+                        SizedBox(
+                          width: 66,
+                          height: 66,
+                          child: IconButton(
+                            tooltip: _state == OfflinePlayerState.playing
+                                ? 'Pause'
+                                : 'Play',
+                            iconSize: 38,
+                            color: MobiusColors.onAccentOf(context),
+                            style: IconButton.styleFrom(
+                              backgroundColor: MobiusColors.accentOf(context),
+                              elevation: 0,
+                              shadowColor: Colors.transparent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(22),
+                              ),
+                            ),
+                            icon: Icon(
+                              _state == OfflinePlayerState.playing
+                                  ? Icons.pause_rounded
+                                  : Icons.play_arrow_rounded,
+                            ),
+                            onPressed: _togglePlayback,
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: 'Next',
+                          iconSize: 32,
+                          color: hasQueue
+                              ? MobiusColors.textOf(context)
+                              : MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.skip_next_rounded),
+                          onPressed: hasQueue ? _next : null,
+                        ),
+                        IconButton(
+                          tooltip: _repeatLabel(),
+                          iconSize: 24,
+                          color: _repeatMode == OfflinePlayerRepeatMode.off
+                              ? MobiusColors.textDimOf(context)
+                              : MobiusColors.accentLightOf(context),
+                          icon: Icon(_repeatIcon()),
+                          onPressed: _cycleRepeatMode,
+                        ),
+                      ],
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Next',
-                    iconSize: 32,
-                    color: hasQueue
-                        ? MobiusColors.textOf(context)
-                        : MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.skip_next_rounded),
-                    onPressed: hasQueue ? _next : null,
-                  ),
-                  IconButton(
-                    tooltip: _repeatLabel(),
-                    iconSize: 24,
-                    color: _repeatMode == OfflinePlayerRepeatMode.off
-                        ? MobiusColors.textDimOf(context)
-                        : MobiusColors.accentLightOf(context),
-                    icon: Icon(_repeatIcon()),
-                    onPressed: _cycleRepeatMode,
-                  ),
-                ],
-              ),
 
-              const SizedBox(height: 16),
+                    const SizedBox(height: 12),
 
-              // Bottom row: queue · sound · playlist · share.
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    tooltip: 'Queue',
-                    iconSize: 20,
-                    color: MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.queue_music_rounded),
-                    onPressed: _openQueueSheet,
-                  ),
-                  IconButton(
-                    tooltip: 'Sound',
-                    iconSize: 20,
-                    color: MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.graphic_eq_rounded),
-                    onPressed: _openSound,
-                  ),
-                  IconButton(
-                    tooltip: 'Add to playlist',
-                    iconSize: 20,
-                    color: MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.playlist_add_rounded),
-                    onPressed: widget.onAddToPlaylist,
-                  ),
-                  IconButton(
-                    tooltip: 'Share music card',
-                    iconSize: 20,
-                    color: MobiusColors.textDimOf(context),
-                    icon: const Icon(Icons.share_rounded),
-                    onPressed: _openShareCard,
-                  ),
-                ],
+                    // Bottom row: queue · lyrics · sound · playlist · share.
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          tooltip: 'Queue',
+                          iconSize: 20,
+                          color: MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.queue_music_rounded),
+                          onPressed: _openQueueSheet,
+                        ),
+                        IconButton(
+                          tooltip: _showLyrics ? 'Hide lyrics' : 'Lyrics',
+                          iconSize: 20,
+                          color: _showLyrics
+                              ? (_extractedAccent ??
+                                  MobiusColors.accentLightOf(context))
+                              : MobiusColors.textDimOf(context),
+                          icon: Icon(
+                            _showLyrics
+                                ? Icons.lyrics_rounded
+                                : Icons.lyrics_outlined,
+                          ),
+                          onPressed: _toggleLyrics,
+                        ),
+                        IconButton(
+                          tooltip: 'Sound',
+                          iconSize: 20,
+                          color: MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.graphic_eq_rounded),
+                          onPressed: _openSound,
+                        ),
+                        IconButton(
+                          tooltip: 'Add to playlist',
+                          iconSize: 20,
+                          color: MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.playlist_add_rounded),
+                          onPressed: widget.onAddToPlaylist,
+                        ),
+                        IconButton(
+                          tooltip: 'Share music card',
+                          iconSize: 20,
+                          color: MobiusColors.textDimOf(context),
+                          icon: const Icon(Icons.share_rounded),
+                          onPressed: _openShareCard,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -1633,7 +1927,8 @@ class _Artwork extends StatelessWidget {
           ? Image(
               image: image!,
               fit: BoxFit.cover,
-              filterQuality: FilterQuality.high,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.medium,
               errorBuilder: (_, __, ___) {
                 return Center(
                   child: Icon(
@@ -1679,6 +1974,154 @@ class _QueueResizeHandle extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Running marquee text for Now Playing title on mobile.
+///
+/// If the text fits the container width, it renders static text.
+/// If the text overflows, it smoothly scrolls horizontally with an initial
+/// pause, soft right-edge fade mask, comfortable reading pace, and looping
+/// pause, activating only while playback is active.
+class NowPlayingMarqueeTitle extends StatefulWidget {
+  const NowPlayingMarqueeTitle({
+    super.key,
+    required this.text,
+    required this.style,
+    required this.isPlaying,
+  });
+
+  final String text;
+  final TextStyle style;
+  final bool isPlaying;
+
+  @override
+  State<NowPlayingMarqueeTitle> createState() => _NowPlayingMarqueeTitleState();
+}
+
+class _NowPlayingMarqueeTitleState extends State<NowPlayingMarqueeTitle> {
+  final ScrollController _controller = ScrollController();
+  bool _isLooping = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isPlaying) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startLoop();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant NowPlayingMarqueeTitle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      if (_controller.hasClients) {
+        _controller.jumpTo(0);
+      }
+      if (widget.isPlaying) {
+        _startLoop();
+      }
+    } else if (!oldWidget.isPlaying && widget.isPlaying) {
+      _startLoop();
+    }
+  }
+
+  void _startLoop() {
+    if (_isLooping) return;
+    _isLooping = true;
+    unawaited(_runAnimation());
+  }
+
+  Future<void> _runAnimation() async {
+    // Initial pause so the user can comfortably read the beginning of the title
+    await Future<void>.delayed(const Duration(milliseconds: 1800));
+    while (mounted && widget.isPlaying) {
+      if (!_controller.hasClients) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        continue;
+      }
+      final maxExtent = _controller.position.maxScrollExtent;
+      if (maxExtent <= 0) break;
+
+      // Comfortable reading speed: ~28 px/second
+      final durationMs = (maxExtent / 28 * 1000).round().clamp(1500, 15000);
+      await _controller.animateTo(
+        maxExtent,
+        duration: Duration(milliseconds: durationMs),
+        curve: Curves.linear,
+      );
+
+      if (!mounted || !widget.isPlaying || !_controller.hasClients) break;
+
+      // Pause at the end before returning
+      await Future<void>.delayed(const Duration(milliseconds: 1600));
+      if (!mounted || !_controller.hasClients) break;
+
+      _controller.jumpTo(0);
+      await Future<void>.delayed(const Duration(milliseconds: 1400));
+    }
+    _isLooping = false;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: widget.text, style: widget.style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout();
+
+        if (painter.width <= constraints.maxWidth) {
+          return Text(
+            widget.text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: widget.style,
+          );
+        }
+
+        return ShaderMask(
+          shaderCallback: (bounds) {
+            return const LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Colors.black,
+                Colors.black,
+                Colors.transparent,
+              ],
+              stops: [0.0, 0.90, 1.0],
+            ).createShader(bounds);
+          },
+          blendMode: BlendMode.dstIn,
+          child: SingleChildScrollView(
+            controller: _controller,
+            scrollDirection: Axis.horizontal,
+            physics: const NeverScrollableScrollPhysics(),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 36),
+              child: Text(
+                widget.text,
+                maxLines: 1,
+                softWrap: false,
+                style: widget.style,
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

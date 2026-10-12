@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -33,6 +34,7 @@ class MiniPlayer extends StatelessWidget {
     required this.onAddToPlaylist,
     required this.onToggleRepeat,
     required this.onOpenQueue,
+    this.onOpenLyrics,
   });
 
   final double height;
@@ -56,6 +58,7 @@ class MiniPlayer extends StatelessWidget {
   final VoidCallback onAddToPlaylist;
   final VoidCallback onToggleRepeat;
   final VoidCallback onOpenQueue;
+  final VoidCallback? onOpenLyrics;
 
   @override
   Widget build(BuildContext context) {
@@ -64,18 +67,42 @@ class MiniPlayer extends StatelessWidget {
     return Container(
       height: height,
       decoration: BoxDecoration(
-        color: colors.miniPlayer,
-        border: Border(top: BorderSide(color: colors.border)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      child: Row(
-        children: [
-          Expanded(flex: 3, child: _buildTrackInfo(colors)),
-          const SizedBox(width: 20),
-          Expanded(flex: 5, child: _buildTransport(colors)),
-          const SizedBox(width: 20),
-          Expanded(flex: 3, child: _buildTrailingActions(colors)),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.28),
+            blurRadius: 24,
+            spreadRadius: -4,
+            offset: const Offset(0, 8),
+          ),
         ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+          child: Container(
+            height: height,
+            decoration: BoxDecoration(
+              color: colors.miniPlayer.withValues(alpha: 0.82),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: colors.border.withValues(alpha: 0.5),
+                width: 1,
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Row(
+              children: [
+                Expanded(flex: 3, child: _buildTrackInfo(colors)),
+                const SizedBox(width: 12),
+                Expanded(flex: 5, child: _buildTransport(colors)),
+                const SizedBox(width: 12),
+                Expanded(flex: 3, child: _buildTrailingActions(colors)),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -137,12 +164,15 @@ class MiniPlayer extends StatelessWidget {
               tooltip: 'Previous',
               onPressed: hasTrack ? onPrevious : null,
               icon: const Icon(Icons.skip_previous_rounded),
-              iconSize: 27,
+              iconSize: 25,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             SizedBox(
-              width: 48,
-              height: 48,
+              width: 44,
+              height: 44,
               child: FilledButton(
                 onPressed: hasTrack ? onPlayPause : null,
                 style: FilledButton.styleFrom(
@@ -153,16 +183,19 @@ class MiniPlayer extends StatelessWidget {
                 ),
                 child: Icon(
                   isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  size: 28,
+                  size: 26,
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             IconButton(
               tooltip: 'Next',
               onPressed: hasTrack ? onNext : null,
               icon: const Icon(Icons.skip_next_rounded),
-              iconSize: 27,
+              iconSize: 25,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             ),
           ],
         ),
@@ -189,42 +222,69 @@ class MiniPlayer extends StatelessWidget {
     final hasTrack = track != null;
     final repeatActive = repeatMode != OfflinePlayerRepeatMode.off;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        IconButton(
-          tooltip: isFavorite ? 'Remove from Favorites' : 'Add to Favorites',
-          onPressed: hasTrack ? onToggleFavorite : null,
-          icon: Icon(
-            isFavorite
-                ? Icons.favorite_rounded
-                : Icons.favorite_border_rounded,
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerRight,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: isFavorite ? 'Remove from Favorites' : 'Add to Favorites',
+            onPressed: hasTrack ? onToggleFavorite : null,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            icon: Icon(
+              isFavorite
+                  ? Icons.favorite_rounded
+                  : Icons.favorite_border_rounded,
+            ),
+            iconSize: 20,
+            color: isFavorite ? colors.accentLight : colors.textSecondary,
           ),
-          iconSize: 21,
-          color: isFavorite ? colors.accentLight : colors.textSecondary,
-        ),
-        IconButton(
-          tooltip: 'Add to playlist',
-          onPressed: hasTrack ? onAddToPlaylist : null,
-          icon: const Icon(Icons.playlist_add_rounded),
-          iconSize: 22,
-          color: colors.textSecondary,
-        ),
-        IconButton(
-          tooltip: _repeatLabel(),
-          onPressed: hasTrack ? onToggleRepeat : null,
-          icon: Icon(_repeatIcon()),
-          iconSize: 22,
-          color: repeatActive ? colors.accentLight : colors.textSecondary,
-        ),
-        IconButton(
-          tooltip: 'Queue',
-          onPressed: hasTrack ? onOpenQueue : null,
-          icon: const Icon(Icons.queue_music_rounded),
-          iconSize: 22,
-          color: colors.textSecondary,
-        ),
-      ],
+          IconButton(
+            tooltip: 'Add to playlist',
+            onPressed: hasTrack ? onAddToPlaylist : null,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            icon: const Icon(Icons.playlist_add_rounded),
+            iconSize: 21,
+            color: colors.textSecondary,
+          ),
+          IconButton(
+            tooltip: _repeatLabel(),
+            onPressed: hasTrack ? onToggleRepeat : null,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            icon: Icon(_repeatIcon()),
+            iconSize: 20,
+            color: repeatActive ? colors.accentLight : colors.textSecondary,
+          ),
+          IconButton(
+            tooltip: 'Queue',
+            onPressed: hasTrack ? onOpenQueue : null,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
+            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+            icon: const Icon(Icons.queue_music_rounded),
+            iconSize: 21,
+            color: colors.textSecondary,
+          ),
+          if (onOpenLyrics != null)
+            IconButton(
+              tooltip: 'Lyrics',
+              onPressed: hasTrack ? onOpenLyrics : null,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.all(6),
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              icon: const Icon(Icons.lyrics_rounded),
+              iconSize: 20,
+              color: colors.textSecondary,
+            ),
+        ],
+      ),
     );
   }
 
@@ -243,7 +303,7 @@ class MiniPlayer extends StatelessWidget {
       height: 54,
       decoration: BoxDecoration(
         color: colors.border,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
       ),
       clipBehavior: Clip.antiAlias,
       child: artwork != null

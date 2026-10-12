@@ -28,6 +28,7 @@ class LibraryPage extends StatefulWidget {
     this.favoritesOnly = false,
     this.currentTrackId,
     this.libraryVersion = 0,
+    this.favoritesVersion = 0,
   });
 
   final FfiLibraryRepository repository;
@@ -40,6 +41,7 @@ class LibraryPage extends StatefulWidget {
   final bool favoritesOnly;
   final int? currentTrackId;
   final int libraryVersion;
+  final int favoritesVersion;
 
   @override
   State<LibraryPage> createState() => LibraryPageState();
@@ -48,7 +50,8 @@ class LibraryPage extends StatefulWidget {
 class LibraryPageState extends State<LibraryPage> {
   final GlobalKey<AlbumsPageState> _albumsKey = GlobalKey<AlbumsPageState>();
   final GlobalKey<ArtistsPageState> _artistsKey = GlobalKey<ArtistsPageState>();
-  final GlobalKey<PlaylistsPageState> _playlistsKey = GlobalKey<PlaylistsPageState>();
+  final GlobalKey<PlaylistsPageState> _playlistsKey =
+      GlobalKey<PlaylistsPageState>();
 
   final List<TrackMetadata> _tracks = [];
   // Bumped whenever _tracks is mutated; part of the _visibleTracks cache key.
@@ -68,7 +71,6 @@ class LibraryPageState extends State<LibraryPage> {
   /// Which mobile text-tab is active (Songs/Albums/Artists/Playlists). Only
   /// used on the mobile (< 900) path; desktop ignores it.
   _MobileLibraryTab _mobileTab = _MobileLibraryTab.songs;
-
 
   @override
   void initState() {
@@ -222,15 +224,13 @@ class LibraryPageState extends State<LibraryPage> {
       final visibleTracks = _visibleTracks;
       final queueIds = visibleTracks.map((item) => item.trackId).toList();
 
-      widget.playerController.setQueue(queueIds);
-
       final index = queueIds.indexOf(track.trackId);
 
       if (index < 0) {
         return;
       }
 
-      await widget.playerController.selectAndPlay(index);
+      await widget.playerController.setQueueAndPlay(queueIds, index);
 
       if (mounted) {
         setState(() {});
@@ -375,6 +375,7 @@ class LibraryPageState extends State<LibraryPage> {
             onGoToArtist: widget.onGoToArtist,
             onGoToAlbum: widget.onGoToAlbum,
             collectionsVersion: widget.libraryVersion,
+            favoritesVersion: widget.favoritesVersion,
           ),
         );
       case _MobileLibraryTab.songs:
@@ -444,7 +445,7 @@ class LibraryPageState extends State<LibraryPage> {
     final count = _tracks.length;
     switch (_mobileTab) {
       case _MobileLibraryTab.songs:
-        return '$count ${count == 1 ? 'song' : 'songs'}';
+        return '$count ${count == 1 ? 'track' : 'tracks'}';
       case _MobileLibraryTab.albums:
         return 'Albums';
       case _MobileLibraryTab.artists:
@@ -717,7 +718,9 @@ class LibraryPageState extends State<LibraryPage> {
                         decodeSize: 88,
                         filterQuality: FilterQuality.medium,
                         placeholder: Container(
-                          color: MobiusColors.borderOf(context).withValues(alpha: 0.4),
+                          color: MobiusColors.borderOf(
+                            context,
+                          ).withValues(alpha: 0.4),
                           alignment: Alignment.center,
                           child: Icon(
                             isCurrent
@@ -732,7 +735,9 @@ class LibraryPageState extends State<LibraryPage> {
                       ),
                       if (isCurrent)
                         Container(
-                          color: MobiusColors.accentOf(context).withValues(alpha: 0.35),
+                          color: MobiusColors.accentOf(
+                            context,
+                          ).withValues(alpha: 0.35),
                           child: Center(
                             child: Icon(
                               Icons.equalizer_rounded,
@@ -786,7 +791,9 @@ class LibraryPageState extends State<LibraryPage> {
                   tooltip: 'More options',
                   onPressed: () {
                     final box = btnContext.findRenderObject() as RenderBox;
-                    final position = box.localToGlobal(Offset(0, box.size.height));
+                    final position = box.localToGlobal(
+                      Offset(0, box.size.height),
+                    );
                     TrackContextMenu.showForTrack(
                       context: context,
                       position: position,
@@ -1214,6 +1221,7 @@ class LibraryPageState extends State<LibraryPage> {
     }
 
     return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 124),
       itemCount: tracks.length,
       itemBuilder: (context, index) {
         final track = tracks[index];
@@ -1255,7 +1263,7 @@ enum _LibrarySort { title, artist, album, releaseDate }
 /// Mobile Library text-tabs. Albums/Artists/Playlists reuse the existing page
 /// widgets; Songs is the Library's own grouped list.
 enum _MobileLibraryTab {
-  songs('Songs'),
+  songs('Tracks'),
   albums('Albums'),
   artists('Artists'),
   playlists('Playlists');

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../core/ffi/offline_player.dart';
+import '../features/home/presentation/home_page.dart';
 import '../features/library/data/ffi_library_repository.dart';
 import '../features/library/data/user_collections.dart';
 import '../features/library/presentation/library_page.dart';
@@ -21,20 +22,21 @@ import 'mobius_app.dart' show ThemeModeController;
 /// shell renders. One source of truth for the adaptive split.
 const double kMobileBreakpoint = 900;
 
-/// Page indices shared by both shells. The desktop sidebar exposes all six;
+/// Page indices shared by both shells. The desktop sidebar exposes all entries;
 /// the mobile bottom nav drops [kSoundPageIndex] (Sound is reached from inside
 /// Settings on mobile) but reuses the same indices for the pages it keeps.
-const int kLibraryPageIndex = 0;
-const int kAlbumsPageIndex = 1;
-const int kArtistsPageIndex = 2;
-const int kPlaylistsPageIndex = 3;
-const int kSoundPageIndex = 4;
-const int kSettingsPageIndex = 5;
+const int kHomePageIndex = 0;
+const int kLibraryPageIndex = 1;
+const int kAlbumsPageIndex = 2;
+const int kArtistsPageIndex = 3;
+const int kPlaylistsPageIndex = 4;
+const int kSoundPageIndex = 5;
+const int kSettingsPageIndex = 6;
 
 /// Mobile-only Search page index. The desktop sidebar does not expose it (it
 /// has its own in-page library search); it is only reached from the mobile
 /// bottom nav, so it sits past the shared desktop indices.
-const int kSearchPageIndex = 6;
+const int kSearchPageIndex = 7;
 
 /// A plain snapshot of everything a shell reads off [PlayerController].
 /// Exists purely so the read path lives in one place instead of being
@@ -80,6 +82,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
 
   int _selectedPage = 0;
   int _libraryVersion = 0;
+  int _favoritesVersion = 0;
   int _albumNavigationRequest = 0;
   int _artistNavigationRequest = 0;
   TrackMetadata? _albumNavigationTrack;
@@ -115,6 +118,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
   // ---- Read-only accessors for subclass build methods -------------------
   int get selectedPage => _selectedPage;
   int get libraryVersion => _libraryVersion;
+  int get favoritesVersion => _favoritesVersion;
   int get currentTrackId => _currentTrackId;
   TrackMetadata? get currentTrackMetadata => _currentTrackMetadata;
   ImageProvider? get currentArtworkImage => _currentArtworkImage;
@@ -128,7 +132,13 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
   set selectedPage(int value) {
     if (value == _selectedPage) return;
     setState(() => _selectedPage = value);
+    onSelectedPageChanged();
   }
+
+  /// Lets a shell reset any page-local navigation when its selected content
+  /// destination changes. Desktop keeps its existing in-place page switching.
+  @protected
+  void onSelectedPageChanged() {}
 
   // ---- Lifecycle --------------------------------------------------------
   void initPlayerShell() {
@@ -252,6 +262,8 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
     } catch (_) {}
   }
 
+  static final Map<String, ImageProvider> _albumMiniArtworkCache = {};
+
   void _loadArtworkForTrack(int trackId) {
     if (trackId <= 0) {
       _currentTrackMetadata = null;
@@ -260,7 +272,19 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
     }
 
     try {
-      _currentTrackMetadata = repository.getTrackMetadata(trackId);
+      final metadata = repository.getTrackMetadata(trackId);
+      _currentTrackMetadata = metadata;
+
+      final albumKey = metadata.album.trim().isNotEmpty &&
+              metadata.artist.trim().isNotEmpty
+          ? '${metadata.artist.trim().toLowerCase()} - ${metadata.album.trim().toLowerCase()}'
+          : 'track_$trackId';
+
+      if (_albumMiniArtworkCache.containsKey(albumKey)) {
+        _currentArtworkImage = _albumMiniArtworkCache[albumKey];
+        return;
+      }
+
       final artwork = repository.getTrackArtwork(trackId);
 
       if (artwork == null || artwork.data.isEmpty) {
@@ -268,11 +292,13 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
         return;
       }
 
-      _currentArtworkImage = ResizeImage(
+      final provider = ResizeImage(
         MemoryImage(artwork.data),
         width: 128,
         height: 128,
       );
+      _currentArtworkImage = provider;
+      _albumMiniArtworkCache[albumKey] = provider;
     } catch (_) {
       _currentArtworkImage = null;
     }
@@ -308,6 +334,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
       _artistNavigationRequest++;
       _selectedPage = kArtistsPageIndex;
     });
+    onSelectedPageChanged();
   }
 
   void goToAlbum(TrackMetadata track) {
@@ -316,6 +343,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
       _albumNavigationRequest++;
       _selectedPage = kAlbumsPageIndex;
     });
+    onSelectedPageChanged();
   }
 
   Future<void> toggleCurrentFavorite() async {
@@ -323,8 +351,10 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
     if (trackId <= 0) return;
     final isFavorite = await collections.toggleFavorite(trackId);
     if (!mounted || _currentTrackId != trackId) return;
-    setState(() => _currentTrackIsFavorite = isFavorite);
-    refreshLibrary();
+    setState(() {
+      _currentTrackIsFavorite = isFavorite;
+      _favoritesVersion++;
+    });
   }
 
   Future<void> addCurrentTrackToPlaylist() async {
@@ -361,7 +391,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
   }
 
   // ---- Transport actions ------------------------------------------------
-  void openNowPlaying({bool openQueue = false}) {
+  void openNowPlaying({bool openQueue = false, bool openLyrics = false}) {
     if (_currentTrackId <= 0) {
       return;
     }
@@ -376,6 +406,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
                   playerController: playerController,
                   collections: collections,
                   initialOpenQueue: openQueue,
+                  initialOpenLyrics: openLyrics,
                   isFavorite: _currentTrackIsFavorite,
                   onToggleFavorite: toggleCurrentFavorite,
                   onAddToPlaylist: addCurrentTrackToPlaylist,
@@ -428,6 +459,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
   }
 
   void openQueue() => openNowPlaying(openQueue: true);
+  void openLyrics() => openNowPlaying(openLyrics: true);
 
   void seekTo(double value) {
     if (_currentDuration <= 0) {
@@ -479,8 +511,25 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
   /// so the mobile shell can render a "Sound" row that pushes [SoundPage];
   /// the desktop shell passes `null` (Sound is a sidebar tab there), leaving
   /// the Settings page unchanged.
-  Widget buildPage(int index, {VoidCallback? onOpenSound, Key? libraryKey}) {
+  Widget buildPage(
+    int index, {
+    VoidCallback? onOpenSound,
+    Key? libraryKey,
+  }) {
     switch (index) {
+      case kHomePageIndex:
+        return HomePage(
+          repository: repository,
+          playerController: playerController,
+          onOpenNowPlaying: openNowPlaying,
+          onLibraryChanged: refreshLibrary,
+          onGoToLibrary: () => selectedPage = kLibraryPageIndex,
+          onGoToAlbum: goToAlbum,
+          onGoToArtist: goToArtist,
+          libraryVersion: _libraryVersion,
+          favoritesVersion: _favoritesVersion,
+        );
+
       case kLibraryPageIndex:
         return LibraryPage(
           key: libraryKey,
@@ -493,6 +542,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
           collections: collections,
           currentTrackId: _currentTrackId,
           libraryVersion: _libraryVersion,
+          favoritesVersion: _favoritesVersion,
         );
 
       case kAlbumsPageIndex:
@@ -529,6 +579,7 @@ mixin PlayerShellState<T extends StatefulWidget> on State<T> {
           onGoToArtist: goToArtist,
           onGoToAlbum: goToAlbum,
           collectionsVersion: _libraryVersion,
+          favoritesVersion: _favoritesVersion,
         );
 
       case kSoundPageIndex:

@@ -816,7 +816,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           Text(
-            '1.2.0',
+            '1.2.1',
             style: TextStyle(
               color: MobiusColors.textDimOf(context),
               fontSize: 13,
@@ -831,7 +831,7 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(32, 12, 36, 24),
+      padding: const EdgeInsets.fromLTRB(32, 12, 36, 124),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(

@@ -46,8 +46,9 @@ void main() {
     expect(find.byType(MobileShell), findsOneWidget);
     expect(find.byType(MobiusShell), findsNothing);
     expect(find.byType(NavigationBar), findsOneWidget);
-    // Three bottom-nav destinations (v4): Library, Search, Settings.
-    expect(find.byType(NavigationDestination), findsNWidgets(3));
+    // Four bottom-nav destinations: Home, Library, Search, Settings.
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    expect(find.text('Home'), findsWidgets);
     expect(find.text('Library'), findsWidgets);
     expect(find.text('Search'), findsWidgets);
     expect(find.text('Settings'), findsWidgets);

@@ -30,4 +30,10 @@ object PlaybackHolder {
      */
     @Volatile
     var onCommand: ((action: String, positionMs: Long?) -> Unit)? = null
+
+    /**
+     * Controls the foreground playback WakeLock owned by [MobiusPlaybackService].
+     */
+    @Volatile
+    var updateWakeLock: ((isPlaying: Boolean) -> Unit)? = null
 }

@@ -25,7 +25,7 @@ class AmbientConfig {
     this.animationSpeed = 1.0,
     this.warmMode = false,
     this.enabled = true,
-    this.maxFrameRate = 30,
+    this.maxFrameRate = 20,
   });
 
   /// Near-black canvas the light fields sit on.

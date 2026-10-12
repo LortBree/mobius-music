@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../core/platform/app_lifecycle_bridge.dart';
 import '../features/library/data/ffi_library_repository.dart';
-import '../features/library/presentation/library_page.dart' show LibraryPageState;
+import '../features/library/presentation/library_page.dart'
+    show LibraryPageState;
 import '../features/sound/presentation/sound_page.dart';
 import '../playback/player_controller.dart';
 import '../playback/presentation/mobile_mini_player.dart';
@@ -33,6 +34,7 @@ class MobileShell extends StatefulWidget {
 
 class _MobileShellState extends State<MobileShell> with PlayerShellState {
   final GlobalKey<LibraryPageState> _libraryKey = GlobalKey<LibraryPageState>();
+  GlobalKey<NavigatorState> _contentNavigatorKey = GlobalKey<NavigatorState>();
 
   @override
   FfiLibraryRepository get repository => widget.repository;
@@ -43,23 +45,33 @@ class _MobileShellState extends State<MobileShell> with PlayerShellState {
 
   static const double _miniPlayerHeight = 62;
 
-  /// Bottom-nav destinations (v4): Library · Search · Settings. Albums,
-  /// Artists and Playlists are reached from inside Library's tabs and from
-  /// search results, not from the bottom bar. Sound is reached from Settings.
+  /// Bottom-nav destinations: Home · Library · Search · Settings.
   static const List<NavigationDestination> _destinations = [
     NavigationDestination(
+      icon: Icon(Icons.home_outlined),
+      selectedIcon: Icon(Icons.home_rounded),
+      label: 'Home',
+    ),
+    NavigationDestination(
       icon: Icon(Icons.library_music_outlined),
+      selectedIcon: Icon(Icons.library_music_rounded),
       label: 'Library',
     ),
-    NavigationDestination(icon: Icon(Icons.search_rounded), label: 'Search'),
+    NavigationDestination(
+      icon: Icon(Icons.search_rounded),
+      selectedIcon: Icon(Icons.search_rounded),
+      label: 'Search',
+    ),
     NavigationDestination(
       icon: Icon(Icons.settings_outlined),
+      selectedIcon: Icon(Icons.settings_rounded),
       label: 'Settings',
     ),
   ];
 
   /// Shared page index for each bottom-nav tab.
   static const List<int> _tabToPageIndex = [
+    kHomePageIndex,
     kLibraryPageIndex,
     kSearchPageIndex,
     kSettingsPageIndex,
@@ -87,7 +99,24 @@ class _MobileShellState extends State<MobileShell> with PlayerShellState {
   }
 
   void _onTabSelected(int tabIndex) {
-    selectedPage = _tabToPageIndex[tabIndex];
+    final targetPage = _tabToPageIndex[tabIndex];
+    if (selectedPage == targetPage) {
+      final nav = _contentNavigatorKey.currentState;
+      if (nav != null && nav.canPop()) {
+        nav.popUntil((route) => route.isFirst);
+      }
+      if (targetPage == kLibraryPageIndex) {
+        _libraryKey.currentState?.handleBack();
+      }
+      return;
+    }
+    _contentNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+    selectedPage = targetPage;
+  }
+
+  @override
+  void onSelectedPageChanged() {
+    _contentNavigatorKey = GlobalKey<NavigatorState>();
   }
 
   void _openSound() {
@@ -135,18 +164,30 @@ class _MobileShellState extends State<MobileShell> with PlayerShellState {
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
 
-        // 1. If currently on Library page, let it handle sub-tab/detail navigation first
-        if (selectedPage == kLibraryPageIndex) {
-          if (_libraryKey.currentState?.handleBack() == true) {
-            return;
-          }
-          // Already on Songs tab (home): move app to background without killing activity or state
+        // 1. If the nested content navigator has pushed sub-routes (e.g. detail pages, sound), pop them first.
+        final nav = _contentNavigatorKey.currentState;
+        if (nav != null && nav.canPop()) {
+          nav.pop();
+          return;
+        }
+
+        // 2. If currently on Home page, move app to background without killing activity.
+        if (selectedPage == kHomePageIndex) {
           await AppLifecycleBridge.moveTaskToBack();
           return;
         }
 
-        // 2. If on any other page (Search, Settings, etc.), return to Library page
-        setState(() => selectedPage = kLibraryPageIndex);
+        // 3. If on Library page, let it handle sub-tab navigation or go back to Home
+        if (selectedPage == kLibraryPageIndex) {
+          if (_libraryKey.currentState?.handleBack() == true) {
+            return;
+          }
+          selectedPage = kHomePageIndex;
+          return;
+        }
+
+        // 4. If on any other page (Search, Settings, etc.), return to Home page
+        selectedPage = kHomePageIndex;
       },
       child: Scaffold(
         backgroundColor: colors.background,
@@ -159,10 +200,25 @@ class _MobileShellState extends State<MobileShell> with PlayerShellState {
             child: Stack(
               children: [
                 Positioned.fill(
-                  child: buildPage(
-                    selectedPage,
-                    onOpenSound: _openSound,
-                    libraryKey: _libraryKey,
+                  child: NavigatorPopHandler<void>(
+                    onPopWithResult: (_) {
+                      final nav = _contentNavigatorKey.currentState;
+                      if (nav != null && nav.canPop()) {
+                        nav.pop();
+                      }
+                    },
+                    child: Navigator(
+                      key: _contentNavigatorKey,
+                      onGenerateInitialRoutes: (navigator, initialRoute) => [
+                        MaterialPageRoute<void>(
+                          builder: (_) => buildPage(
+                            selectedPage,
+                            onOpenSound: _openSound,
+                            libraryKey: _libraryKey,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (hasTrack)
@@ -183,6 +239,8 @@ class _MobileShellState extends State<MobileShell> with PlayerShellState {
                       onToggleRepeat: toggleRepeat,
                       onToggleFavorite: toggleCurrentFavorite,
                       onPlayPause: playPause,
+                      onPrevious: previous,
+                      onNext: next,
                     ),
                   ),
               ],

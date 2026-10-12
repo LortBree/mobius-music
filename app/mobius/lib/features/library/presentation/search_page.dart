@@ -151,10 +151,9 @@ class _SearchPageState extends State<SearchPage> {
     try {
       final songs = _matchingSongs;
       final ids = songs.map((item) => item.trackId).toList();
-      widget.playerController.setQueue(ids);
       final index = ids.indexOf(track.trackId);
       if (index < 0) return;
-      await widget.playerController.selectAndPlay(index);
+      await widget.playerController.setQueueAndPlay(ids, index);
       if (mounted) setState(() {});
     } catch (error) {
       if (!mounted) return;
@@ -282,6 +281,7 @@ class _SearchPageState extends State<SearchPage> {
     }
 
     return ListView(
+      padding: const EdgeInsets.only(bottom: 124),
       children: [
         if (songs.isNotEmpty) ...[
           _sectionHeader('Songs'),
@@ -433,7 +433,9 @@ class _SearchPageState extends State<SearchPage> {
                     tooltip: 'More options',
                     onPressed: () {
                       final box = btnContext.findRenderObject() as RenderBox;
-                      final position = box.localToGlobal(Offset(0, box.size.height));
+                      final position = box.localToGlobal(
+                        Offset(0, box.size.height),
+                      );
                       TrackContextMenu.showForTrack(
                         context: context,
                         position: position,
@@ -443,10 +445,14 @@ class _SearchPageState extends State<SearchPage> {
                         playerController: widget.playerController,
                         removeLabel: 'Remove from Library',
                         onRemove: () async {
-                          await widget.collections.removeFromLibrary(track.trackId);
+                          await widget.collections.removeFromLibrary(
+                            track.trackId,
+                          );
                           if (!mounted) return;
                           setState(() {
-                            _tracks.removeWhere((item) => item.trackId == track.trackId);
+                            _tracks.removeWhere(
+                              (item) => item.trackId == track.trackId,
+                            );
                           });
                           widget.onLibraryChanged();
                         },

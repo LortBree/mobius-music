@@ -20,13 +20,11 @@ class PlayerController {
     Future<void> Function()? beginPlaybackActivity,
     Future<void> Function()? endPlaybackActivity,
     bool? isAndroidHost,
-  })  : _yieldFrame = yieldFrame ?? _endOfFrame,
-        _isAndroidHost = isAndroidHost ?? (!kIsWeb && Platform.isAndroid),
-        _beginPlaybackActivity =
-            beginPlaybackActivity ?? PlaybackActivity.start,
-        _endPlaybackActivity =
-            endPlaybackActivity ?? PlaybackActivity.stop,
-        usbDacService = UsbDacService(_player);
+  }) : _yieldFrame = yieldFrame ?? _endOfFrame,
+       _isAndroidHost = isAndroidHost ?? (!kIsWeb && Platform.isAndroid),
+       _beginPlaybackActivity = beginPlaybackActivity ?? PlaybackActivity.start,
+       _endPlaybackActivity = endPlaybackActivity ?? PlaybackActivity.stop,
+       usbDacService = UsbDacService(_player);
 
   final OfflinePlayer _player;
   final Future<void> Function() _yieldFrame;
@@ -186,18 +184,26 @@ class PlayerController {
   ValueListenable<double> get volumeListenable => _volumeNotifier;
 
   double _hardwareVolume = 0.36;
-  final ValueNotifier<double> _hardwareVolumeNotifier = ValueNotifier<double>(0.36);
-  ValueListenable<double> get hardwareVolumeListenable => _hardwareVolumeNotifier;
+  final ValueNotifier<double> _hardwareVolumeNotifier = ValueNotifier<double>(
+    0.36,
+  );
+  ValueListenable<double> get hardwareVolumeListenable =>
+      _hardwareVolumeNotifier;
   double get hardwareVolume => _hardwareVolume;
 
   bool _bitPerfectMode = false;
-  final ValueNotifier<bool> _bitPerfectModeNotifier = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _bitPerfectModeNotifier = ValueNotifier<bool>(
+    false,
+  );
   ValueListenable<bool> get bitPerfectModeListenable => _bitPerfectModeNotifier;
   bool get isBitPerfectMode => _bitPerfectMode;
 
   bool _volumeNormalization = false;
-  final ValueNotifier<bool> _volumeNormalizationNotifier = ValueNotifier<bool>(false);
-  ValueListenable<bool> get volumeNormalizationListenable => _volumeNormalizationNotifier;
+  final ValueNotifier<bool> _volumeNormalizationNotifier = ValueNotifier<bool>(
+    false,
+  );
+  ValueListenable<bool> get volumeNormalizationListenable =>
+      _volumeNormalizationNotifier;
   bool get volumeNormalization => _volumeNormalization;
 
   final ValueNotifier<int> _volumePanelTrigger = ValueNotifier<int>(0);
@@ -222,6 +228,7 @@ class PlayerController {
       return 0.0;
     }
   }
+
   bool get isUsbDacActive {
     try {
       return _player.signalPath.outputApi == 'Direct UAC2';
@@ -250,8 +257,8 @@ class PlayerController {
     final effective = isBypassed
         ? 1.0
         : (_volumeNormalization
-            ? (_volume * _normalizationHeadroom).clamp(0.0, 1.0)
-            : _volume);
+              ? (_volume * _normalizationHeadroom).clamp(0.0, 1.0)
+              : _volume);
     try {
       _player.setSoftwareVolume(effective);
     } catch (_) {
@@ -325,6 +332,7 @@ class PlayerController {
       _volumePanelTrigger.value++;
     }
   }
+
   void setBitPerfectMode(bool enabled) {
     _player.setBitPerfectMode(enabled);
     _bitPerfectMode = enabled;
@@ -350,6 +358,42 @@ class PlayerController {
   void setQueue(List<int> trackIds) {
     _player.setQueue(trackIds);
     _commandIssued();
+  }
+
+  /// Starts an item in a new browsing context while retaining tracks added
+  /// with "Add to queue" immediately after the selected item.
+  Future<void> setQueueAndPlay(List<int> trackIds, int index) {
+    if (index < 0 || index >= trackIds.length) return Future<void>.value();
+    final ids = List<int>.unmodifiable(trackIds);
+    return _switchTrack(ids[index], () {
+      final addedTrackIds = <int>[];
+      var oldCurrentTrackId = 0;
+      try {
+        final oldQueue = _player.queueTrackIds;
+        final oldIndex = _player.queueCurrentIndex;
+        if (oldIndex >= 0 && oldIndex < oldQueue.length) {
+          oldCurrentTrackId = oldQueue[oldIndex];
+          final start = oldIndex + 1;
+          final remaining = oldQueue.length - start;
+          final count = _player.queueUpNextCount.clamp(0, remaining).toInt();
+          addedTrackIds.addAll(oldQueue.skip(start).take(count));
+        }
+      } catch (_) {
+        // A player without an active queue has no added-up-next segment.
+      }
+
+      // If the selected track was itself queued and is now the current item,
+      // consume one matching queued copy instead of scheduling a duplicate.
+      if (ids[index] != oldCurrentTrackId) {
+        addedTrackIds.remove(ids[index]);
+      }
+      _player.setQueue(ids);
+      _player.selectAndPlayQueueIndex(index);
+      for (final trackId in addedTrackIds) {
+        _player.addToQueue(trackId);
+      }
+      return null;
+    });
   }
 
   void clearQueue() {
@@ -514,35 +558,67 @@ class PlayerController {
   }
 
   OfflinePlayerState get state {
-    return _player.state;
+    try {
+      return _player.state;
+    } catch (_) {
+      return OfflinePlayerState.idle;
+    }
   }
 
   int get currentFrame {
-    return _player.currentFrame;
+    try {
+      return _player.currentFrame;
+    } catch (_) {
+      return 0;
+    }
   }
 
   double get currentSeconds {
-    return _player.currentSeconds;
+    try {
+      return _player.currentSeconds;
+    } catch (_) {
+      return 0.0;
+    }
   }
 
   double get durationSeconds {
-    return _player.durationSeconds;
+    try {
+      return _player.durationSeconds;
+    } catch (_) {
+      return 0.0;
+    }
   }
 
   int get totalFrames {
-    return _player.totalFrames;
+    try {
+      return _player.totalFrames;
+    } catch (_) {
+      return 0;
+    }
   }
 
   int get sampleRate {
-    return _player.sampleRate;
+    try {
+      return _player.sampleRate;
+    } catch (_) {
+      return 0;
+    }
   }
 
   int get channels {
-    return _player.channels;
+    try {
+      return _player.channels;
+    } catch (_) {
+      return 0;
+    }
   }
 
   int get bitsPerSample {
-    return _player.bitsPerSample;
+    try {
+      return _player.bitsPerSample;
+    } catch (_) {
+      return 0;
+    }
   }
 
   TrackTechnicalInfo get technicalInfo {
@@ -646,7 +722,9 @@ class PlayerController {
       callbackCount: engine.callbackCount,
       outputApi: engine.outputApi,
       route: isUsbDac ? OutputRoute.usb : (host?.route ?? engine.route),
-      deviceName: isUsbDac ? engine.deviceName : ((host?.name.isNotEmpty ?? false) ? host!.name : engine.deviceName),
+      deviceName: isUsbDac
+          ? engine.deviceName
+          : ((host?.name.isNotEmpty ?? false) ? host!.name : engine.deviceName),
     );
   }
 
@@ -667,12 +745,28 @@ class PlayerController {
   }
 
   int get queueLength {
-    return _player.queueLength;
+    try {
+      return _player.queueLength;
+    } catch (_) {
+      return 0;
+    }
   }
 
-  List<int> get queueTrackIds => _player.queueTrackIds;
+  List<int> get queueTrackIds {
+    try {
+      return _player.queueTrackIds;
+    } catch (_) {
+      return const [];
+    }
+  }
 
-  int get queueUpNextCount => _player.queueUpNextCount;
+  int get queueUpNextCount {
+    try {
+      return _player.queueUpNextCount;
+    } catch (_) {
+      return 0;
+    }
+  }
 
   void reorderQueueSegment(int start, List<int> trackIds) {
     _player.reorderQueueSegment(start, trackIds);
@@ -680,15 +774,36 @@ class PlayerController {
   }
 
   int get queueCurrentIndex {
-    return _player.queueCurrentIndex;
+    try {
+      return _player.queueCurrentIndex;
+    } catch (_) {
+      return -1;
+    }
   }
 
   int get currentTrackId {
-    return _player.queueCurrentTrackId;
+    try {
+      return _player.queueCurrentTrackId;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// The file path of the currently loaded audio track, or empty string.
+  String get currentTrackPath {
+    try {
+      return _player.trackPath;
+    } catch (_) {
+      return '';
+    }
   }
 
   OfflinePlayerRepeatMode get repeatMode {
-    return _player.repeatMode;
+    try {
+      return _player.repeatMode;
+    } catch (_) {
+      return OfflinePlayerRepeatMode.off;
+    }
   }
 
   void setRepeatMode(OfflinePlayerRepeatMode mode) {

@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
@@ -7,6 +9,7 @@ import '../../../playback/player_controller.dart';
 import '../../../core/ffi/offline_player.dart';
 import '../data/user_collections.dart';
 import 'group_artwork.dart';
+import 'mobile_detail_scaffold.dart';
 import 'track_context_menu.dart';
 import 'track_list_row.dart';
 
@@ -37,10 +40,8 @@ class ArtistsPage extends StatefulWidget {
 }
 
 class _ArtistEntry {
-  _ArtistEntry({
-    required this.name,
-    required this.trackIds,
-  }) : artwork = GroupArtworkSource(trackIds);
+  _ArtistEntry({required this.name, required this.trackIds})
+    : artwork = GroupArtworkSource(trackIds);
 
   final String name;
   final List<int> trackIds;
@@ -173,13 +174,36 @@ class ArtistsPageState extends State<ArtistsPage> {
   }
 
   void _openArtist(_ArtistEntry artist) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (isMobile) {
+      Navigator.of(context).push(
+        mobileDetailRoute<void>(
+          builder: (routeContext) => MobileDetailScaffold(
+            title: artist.name,
+            bodyBuilder: (isCollapsed) => _ArtistDetailPage(
+              artist: artist,
+              repository: widget.repository,
+              playerController: widget.playerController,
+              collections: widget.collections,
+              onLibraryChanged: widget.onLibraryChanged,
+              onGoToArtist: widget.onGoToArtist,
+              onGoToAlbum: widget.onGoToAlbum,
+              onBack: () => Navigator.of(routeContext).pop(),
+              isCollapsed: isCollapsed,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _selectedArtist = artist);
   }
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final selectedArtist = _selectedArtist;
-    if (selectedArtist != null) {
+    if (!isMobile && selectedArtist != null) {
       return _ArtistDetailPage(
         artist: selectedArtist,
         repository: widget.repository,
@@ -215,12 +239,14 @@ class ArtistsPageState extends State<ArtistsPage> {
       return Center(
         child: Text(
           'No artists found.',
-          style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 15),
+          style: TextStyle(
+            color: MobiusColors.textDimOf(context),
+            fontSize: 15,
+          ),
         ),
       );
     }
 
-    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     if (isMobile) {
       return GridView.builder(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 90),
@@ -277,6 +303,7 @@ class ArtistsPageState extends State<ArtistsPage> {
               mainAxisSpacing: 30,
             ),
           ),
+          const SliverToBoxAdapter(child: SizedBox(height: 124)),
         ],
       ),
     );
@@ -307,21 +334,21 @@ class _ArtistCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               AspectRatio(
-                  aspectRatio: 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: MobiusColors.panelOf(context),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: GroupArtwork(
-                      repository: repository,
-                      source: artist.artwork,
-                      decodeSize: 440,
-                      filterQuality: FilterQuality.medium,
-                      placeholder: const _ArtistPlaceholder(),
-                    ),
+                aspectRatio: 1,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: MobiusColors.panelOf(context),
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  clipBehavior: Clip.antiAlias,
+                  child: GroupArtwork(
+                    repository: repository,
+                    source: artist.artwork,
+                    decodeSize: 440,
+                    filterQuality: FilterQuality.medium,
+                    placeholder: const _ArtistPlaceholder(),
+                  ),
+                ),
               ),
               const SizedBox(height: 12),
               Text(
@@ -337,7 +364,10 @@ class _ArtistCard extends StatelessWidget {
               const SizedBox(height: 5),
               Text(
                 '${artist.trackIds.length} tracks',
-                style: TextStyle(color: MobiusColors.textDimOf(context), fontSize: 13),
+                style: TextStyle(
+                  color: MobiusColors.textDimOf(context),
+                  fontSize: 13,
+                ),
               ),
             ],
           ),
@@ -360,55 +390,52 @@ class _MobileArtistCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Column(
-          children: [
-            AspectRatio(
-              aspectRatio: 1,
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: MobiusColors.panelOf(context),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: GroupArtwork(
-                  repository: repository,
-                  source: artist.artwork,
-                  decodeSize: 320,
-                  filterQuality: FilterQuality.medium,
-                  placeholder: const _ArtistPlaceholder(),
-                ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Column(
+        children: [
+          AspectRatio(
+            aspectRatio: 1,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: MobiusColors.panelOf(context),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: GroupArtwork(
+                repository: repository,
+                source: artist.artwork,
+                decodeSize: 320,
+                filterQuality: FilterQuality.medium,
+                placeholder: const _ArtistPlaceholder(),
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              artist.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: MobiusColors.textOf(context),
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            artist.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: MobiusColors.textOf(context),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 3),
-            Text(
-              '${artist.trackIds.length} tracks',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: MobiusColors.textDimOf(context),
-                fontSize: 12,
-              ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            '${artist.trackIds.length} tracks',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: MobiusColors.textDimOf(context),
+              fontSize: 12,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -450,6 +477,7 @@ class _ArtistDetailPage extends StatefulWidget {
     required this.onGoToArtist,
     required this.onGoToAlbum,
     required this.onBack,
+    this.isCollapsed,
   });
 
   final _ArtistEntry artist;
@@ -460,6 +488,7 @@ class _ArtistDetailPage extends StatefulWidget {
   final ValueChanged<String> onGoToArtist;
   final ValueChanged<TrackMetadata> onGoToAlbum;
   final VoidCallback onBack;
+  final ValueListenable<bool>? isCollapsed;
 
   @override
   State<_ArtistDetailPage> createState() => _ArtistDetailPageState();
@@ -467,25 +496,18 @@ class _ArtistDetailPage extends StatefulWidget {
 
 class _ArtistDetailPageState extends State<_ArtistDetailPage> {
   /// Flat, library-ordered track list (also the play queue order).
-  late final List<TrackMetadata> _tracks = widget.artist.trackIds
-      .map((id) {
-        try {
-          return widget.repository.getTrackMetadata(id);
-        } catch (_) {
-          return null;
-        }
-      })
-      .whereType<TrackMetadata>()
-      .toList();
+  final List<TrackMetadata> _tracks = [];
+  bool _tracksLoaded = false;
 
   /// Tracks grouped by album, preserving first-seen (library) order. Each
   /// track's index into [_tracks] is remembered so playing a row sets the
   /// right queue index.
-  late final List<_ArtistAlbumGroup> _groups = _buildGroups();
+  List<_ArtistAlbumGroup> _groups = const [];
 
   /// trackId -> its index in [_tracks], for the play action.
   late final Map<int, int> _indexOf = {
-    for (var i = 0; i < _tracks.length; i++) _tracks[i].trackId: i,
+    for (var i = 0; i < widget.artist.trackIds.length; i++)
+      widget.artist.trackIds[i]: i,
   };
 
   List<_ArtistAlbumGroup> _buildGroups() {
@@ -521,7 +543,24 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
   void initState() {
     super.initState();
     widget.playerController.commands.addListener(_onPlayerCommand);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadTracks());
+    });
   }
+
+  Future<void> _loadTracks() => loadTrackMetadataInBatches(
+    repository: widget.repository,
+    trackIds: widget.artist.trackIds,
+    isActive: () => mounted,
+    onBatch: (batch, isComplete) {
+      if (!mounted) return;
+      setState(() {
+        _tracks.addAll(batch);
+        _groups = _buildGroups();
+        _tracksLoaded = isComplete;
+      });
+    },
+  );
 
   @override
   void dispose() {
@@ -550,10 +589,12 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
     }
   }
 
-  void _play(int index) {
+  Future<void> _play(int index) async {
     try {
-      widget.playerController.setQueue(widget.artist.trackIds);
-      widget.playerController.selectAndPlay(index);
+      await widget.playerController.setQueueAndPlay(
+        widget.artist.trackIds,
+        index,
+      );
     } catch (error) {
       _showError(error);
     }
@@ -568,10 +609,79 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
       ..showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
+  Widget _buildArtistTrackList(int currentTrackId) {
+    final groups = _groups;
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 124),
+      itemCount: groups.length + (_tracksLoaded ? 0 : 1),
+      itemBuilder: (context, groupIndex) {
+        if (groupIndex >= groups.length) {
+          return const Padding(
+            padding: EdgeInsets.all(20),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final group = groups[groupIndex];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (groupIndex > 0) const SizedBox(height: 20),
+            _ArtistAlbumHeader(group: group, repository: widget.repository),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Divider(
+                height: 1,
+                thickness: 1,
+                color: MobiusColors.borderOf(context),
+              ),
+            ),
+            const SizedBox(height: 8),
+            for (var i = 0; i < group.tracks.length; i++)
+              _buildRow(context, group, i, currentTrackId),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final currentTrackId = _safeCurrentTrackId;
+    final groups = _groups;
+
+    if (isMobile) {
+      return MobileDetailPage(
+        kind: 'Artist',
+        title: widget.artist.name,
+        subtitle: '${widget.artist.trackIds.length} tracks',
+        trackCount: widget.artist.trackIds.length,
+        artwork: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: MobiusColors.panelOf(context),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: GroupArtwork(
+            repository: widget.repository,
+            source: widget.artist.artwork,
+            decodeSize: 220,
+            filterQuality: FilterQuality.medium,
+            placeholder: const _ArtistPlaceholder(),
+          ),
+        ),
+        isCollapsed: widget.isCollapsed,
+        onPlay: widget.artist.trackIds.isEmpty ? null : _playArtist,
+        trackListBuilder: (_) => _buildArtistTrackList(currentTrackId),
+      );
+    }
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -606,87 +716,101 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
             const SizedBox(height: 8),
           ],
           if (isMobile) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Container(
-                  width: 105,
-                  height: 105,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: MobiusColors.panelOf(context),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.35),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+            CollapsibleDetailHeader(
+              isCollapsed: widget.isCollapsed,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 110,
+                        height: 110,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: MobiusColors.panelOf(context),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              blurRadius: 12,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: GroupArtwork(
+                          repository: widget.repository,
+                          source: widget.artist.artwork,
+                          decodeSize: 210,
+                          filterQuality: FilterQuality.medium,
+                          placeholder: const _ArtistPlaceholder(),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'ARTIST',
+                              style: TextStyle(
+                                color: MobiusColors.accentLightOf(context),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              widget.artist.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: MobiusColors.textOf(context),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${widget.artist.trackIds.length} tracks',
+                              style: TextStyle(
+                                color: MobiusColors.textDimOf(context),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: GroupArtwork(
-                    repository: widget.repository,
-                    source: widget.artist.artwork,
-                    decodeSize: 210,
-                    filterQuality: FilterQuality.medium,
-                    placeholder: const _ArtistPlaceholder(),
+                  const SizedBox(height: 14),
+                ],
+              ),
+            ),
+            Row(
+              children: [
+                FilledButton.icon(
+                  onPressed: _groups.isEmpty ? null : _playArtist,
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Play'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: MobiusColors.accentOf(context),
+                    foregroundColor: MobiusColors.onAccentOf(context),
+                    minimumSize: const Size(104, 44),
                   ),
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'ARTIST',
-                        style: TextStyle(
-                          color: MobiusColors.accentLightOf(context),
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.artist.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: MobiusColors.textOf(context),
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${widget.artist.trackIds.length} tracks',
-                        style: TextStyle(
-                          color: MobiusColors.textDimOf(context),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
+                const SizedBox(width: 12),
+                Text(
+                  '${widget.artist.trackIds.length} ${widget.artist.trackIds.length == 1 ? 'song' : 'songs'}',
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
+                    fontSize: 13,
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: FilledButton.icon(
-                onPressed: _playArtist,
-                icon: const Icon(Icons.play_arrow_rounded, size: 22),
-                label: const Text('Play Artist'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: MobiusColors.accentOf(context),
-                  foregroundColor: MobiusColors.onAccentOf(context),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
             ),
           ] else ...[
             Row(
@@ -754,18 +878,24 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
           const SizedBox(height: 20),
           Expanded(
             child: ListView.builder(
-              itemCount: _groups.length,
+              itemCount: groups.length + (_tracksLoaded ? 0 : 1),
               itemBuilder: (context, groupIndex) {
-                final group = _groups[groupIndex];
+                if (groupIndex >= groups.length) {
+                  return const Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final group = groups[groupIndex];
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (groupIndex > 0) const SizedBox(height: 20),
+                    if (groupIndex > 0) const SizedBox(height: 28),
                     _ArtistAlbumHeader(
                       group: group,
                       repository: widget.repository,
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                     for (var i = 0; i < group.tracks.length; i++)
                       _buildRow(context, group, i, currentTrackId),
                   ],
@@ -810,36 +940,67 @@ class _ArtistDetailPageState extends State<_ArtistDetailPage> {
       onGoToAlbum: metadata.album.trim().isEmpty
           ? null
           : () => widget.onGoToAlbum(metadata),
-      child: TrackListRow(
-        key: ValueKey(trackId),
-        trackNumber: displayNumber,
-        title: metadata.title,
-        isCurrent: isCurrent,
-        duration: _currentDuration(isCurrent),
-        onPlay: () => _play(queueIndex),
-        onMore: () {
-          TrackContextMenu.showForTrack(
-            context: context,
-            position: Offset.zero,
-            track: metadata,
-            repository: widget.repository,
-            collections: widget.collections,
-            playerController: widget.playerController,
-            removeLabel: 'Remove from Library',
-            onRemove: () async {
-              await widget.collections.removeFromLibrary(trackId);
-              widget.onLibraryChanged();
-            },
-            onChanged: widget.onLibraryChanged,
-            onGoToArtist: trackArtistName(metadata).isEmpty
-                ? null
-                : () => widget.onGoToArtist(trackArtistName(metadata)),
-            onGoToAlbum: metadata.album.trim().isEmpty
-                ? null
-                : () => widget.onGoToAlbum(metadata),
-          );
-        },
-      ),
+      child: MediaQuery.sizeOf(context).width < kMobileBreakpoint
+          ? MobileDetailTrackRow(
+              key: ValueKey(trackId),
+              trackNumber: displayNumber,
+              title: metadata.title,
+              subtitle: metadata.artist,
+              isCurrent: isCurrent,
+              onPlay: () => _play(queueIndex),
+              onMore: () {
+                TrackContextMenu.showForTrack(
+                  context: context,
+                  position: Offset.zero,
+                  track: metadata,
+                  repository: widget.repository,
+                  collections: widget.collections,
+                  playerController: widget.playerController,
+                  removeLabel: 'Remove from Library',
+                  onRemove: () async {
+                    await widget.collections.removeFromLibrary(trackId);
+                    widget.onLibraryChanged();
+                  },
+                  onChanged: widget.onLibraryChanged,
+                  onGoToArtist: trackArtistName(metadata).isEmpty
+                      ? null
+                      : () => widget.onGoToArtist(trackArtistName(metadata)),
+                  onGoToAlbum: metadata.album.trim().isEmpty
+                      ? null
+                      : () => widget.onGoToAlbum(metadata),
+                );
+              },
+            )
+          : TrackListRow(
+              key: ValueKey(trackId),
+              trackNumber: displayNumber,
+              title: metadata.title,
+              isCurrent: isCurrent,
+              duration: _currentDuration(isCurrent),
+              onPlay: () => _play(queueIndex),
+              onMore: () {
+                TrackContextMenu.showForTrack(
+                  context: context,
+                  position: Offset.zero,
+                  track: metadata,
+                  repository: widget.repository,
+                  collections: widget.collections,
+                  playerController: widget.playerController,
+                  removeLabel: 'Remove from Library',
+                  onRemove: () async {
+                    await widget.collections.removeFromLibrary(trackId);
+                    widget.onLibraryChanged();
+                  },
+                  onChanged: widget.onLibraryChanged,
+                  onGoToArtist: trackArtistName(metadata).isEmpty
+                      ? null
+                      : () => widget.onGoToArtist(trackArtistName(metadata)),
+                  onGoToAlbum: metadata.album.trim().isEmpty
+                      ? null
+                      : () => widget.onGoToAlbum(metadata),
+                );
+              },
+            ),
     );
   }
 }
@@ -854,25 +1015,31 @@ class _ArtistAlbumHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final trackCountText =
+        '${group.tracks.length} ${group.tracks.length == 1 ? 'song' : 'songs'}';
+    final subtitleText = group.year.isNotEmpty
+        ? '$trackCountText • ${group.year}'
+        : trackCountText;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
           ClipRRect(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(8),
             child: SizedBox(
-              width: 44,
-              height: 44,
+              width: 48,
+              height: 48,
               child: ColoredBox(
                 color: MobiusColors.panelOf(context),
                 child: GroupArtwork(
                   repository: repository,
                   source: group.artwork,
-                  decodeSize: 88,
+                  decodeSize: 96,
                   filterQuality: FilterQuality.medium,
                   placeholder: Icon(
                     Icons.album_outlined,
-                    size: 22,
+                    size: 24,
                     color: MobiusColors.textDimOf(context),
                   ),
                 ),
@@ -895,16 +1062,14 @@ class _ArtistAlbumHeader extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                if (group.year.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    group.year,
-                    style: TextStyle(
-                      color: MobiusColors.textDimOf(context),
-                      fontSize: 12,
-                    ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitleText,
+                  style: TextStyle(
+                    color: MobiusColors.textDimOf(context),
+                    fontSize: 12,
                   ),
-                ],
+                ),
               ],
             ),
           ),

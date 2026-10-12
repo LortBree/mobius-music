@@ -1,6 +1,8 @@
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 
 import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
@@ -10,7 +12,9 @@ import '../../../core/ffi/offline_player.dart';
 import '../../../playback/player_controller.dart';
 import '../data/ffi_library_repository.dart';
 import '../data/user_collections.dart';
+import 'group_artwork.dart';
 import 'track_context_menu.dart';
+import 'mobile_detail_scaffold.dart';
 
 const _favoritesCollectionId = '\u0000mobius_favorites';
 
@@ -23,6 +27,7 @@ class PlaylistsPage extends StatefulWidget {
     required this.onGoToArtist,
     required this.onGoToAlbum,
     this.collectionsVersion = 0,
+    this.favoritesVersion = 0,
   });
 
   final FfiLibraryRepository repository;
@@ -31,6 +36,7 @@ class PlaylistsPage extends StatefulWidget {
   final ValueChanged<String> onGoToArtist;
   final ValueChanged<TrackMetadata> onGoToAlbum;
   final int collectionsVersion;
+  final int favoritesVersion;
 
   @override
   State<PlaylistsPage> createState() => PlaylistsPageState();
@@ -68,6 +74,9 @@ class PlaylistsPageState extends State<PlaylistsPage> {
     if (oldWidget.collectionsVersion != widget.collectionsVersion) {
       _reload();
     }
+    if (oldWidget.favoritesVersion != widget.favoritesVersion) {
+      _reloadFavorites();
+    }
   }
 
   @override
@@ -96,6 +105,12 @@ class PlaylistsPageState extends State<PlaylistsPage> {
       }
       _loading = false;
     });
+  }
+
+  Future<void> _reloadFavorites() async {
+    final favoriteTrackIds = await widget.collections.favorites();
+    if (!mounted) return;
+    setState(() => _favoriteTrackIds = favoriteTrackIds);
   }
 
   Future<void> _createPlaylist() async {
@@ -163,17 +178,53 @@ class PlaylistsPageState extends State<PlaylistsPage> {
   }
 
   void _openPlaylist(String name) {
+    _openPlaylistDetail(name);
+  }
+
+  void _openPlaylistDetail(String name) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
+    if (isMobile) {
+      final isFavorites = name == _favoritesCollectionId;
+      final trackIds = isFavorites
+          ? _favoriteTrackIds.toList()
+          : _playlists[name];
+      if (trackIds == null) return;
+      Navigator.of(context).push(
+        mobileDetailRoute<void>(
+          builder: (routeContext) => MobileDetailScaffold(
+            title: isFavorites ? 'Favorites' : name,
+            bodyBuilder: (isCollapsed) => _PlaylistDetailPage(
+              key: ValueKey(name),
+              name: isFavorites ? 'Favorites' : name,
+              trackIds: List<int>.from(trackIds),
+              cover: isFavorites ? null : _covers[name],
+              isFavorites: isFavorites,
+              repository: widget.repository,
+              playerController: widget.playerController,
+              collections: widget.collections,
+              onGoToArtist: widget.onGoToArtist,
+              onGoToAlbum: widget.onGoToAlbum,
+              onBack: () => Navigator.of(routeContext).pop(),
+              onChanged: _reload,
+              isCollapsed: isCollapsed,
+            ),
+          ),
+        ),
+      );
+      return;
+    }
     setState(() => _selectedPlaylistName = name);
   }
 
   void _openFavorites() {
-    setState(() => _selectedPlaylistName = _favoritesCollectionId);
+    _openPlaylistDetail(_favoritesCollectionId);
   }
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final selectedPlaylistName = _selectedPlaylistName;
-    if (selectedPlaylistName != null) {
+    if (!isMobile && selectedPlaylistName != null) {
       final isFavorites = selectedPlaylistName == _favoritesCollectionId;
       final trackIds = isFavorites
           ? _favoriteTrackIds.toList()
@@ -198,8 +249,6 @@ class PlaylistsPageState extends State<PlaylistsPage> {
         );
       }
     }
-
-    final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -233,6 +282,10 @@ class PlaylistsPageState extends State<PlaylistsPage> {
                 }),
                 icon: const Icon(Icons.add_rounded),
                 label: const Text('New playlist'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: MobiusColors.accentOf(context),
+                  foregroundColor: MobiusColors.onAccentOf(context),
+                ),
               ),
             ],
           ),
@@ -280,13 +333,17 @@ class PlaylistsPageState extends State<PlaylistsPage> {
                           : 'Save name',
                       onPressed: _createPlaylist,
                       icon: const Icon(Icons.check_rounded),
+                      style: IconButton.styleFrom(
+                        backgroundColor: MobiusColors.accentOf(context),
+                        foregroundColor: MobiusColors.onAccentOf(context),
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
           ],
-          const SizedBox(height: 28),
+          SizedBox(height: isMobile ? 16 : 28),
           if (_loading)
             const Expanded(
               child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
@@ -294,13 +351,21 @@ class PlaylistsPageState extends State<PlaylistsPage> {
           else
             Expanded(
               child: GridView.builder(
+                padding: EdgeInsets.fromLTRB(0, 0, 0, isMobile ? 90 : 124),
                 itemCount: _playlists.length + 1,
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 240,
-                  mainAxisExtent: 316,
-                  crossAxisSpacing: 24,
-                  mainAxisSpacing: 28,
-                ),
+                gridDelegate: isMobile
+                    ? const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 14,
+                        mainAxisSpacing: 18,
+                        childAspectRatio: 0.76,
+                      )
+                    : const SliverGridDelegateWithMaxCrossAxisExtent(
+                        maxCrossAxisExtent: 240,
+                        mainAxisExtent: 316,
+                        crossAxisSpacing: 24,
+                        mainAxisSpacing: 28,
+                      ),
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     return _PlaylistCard(
@@ -360,103 +425,100 @@ class _PlaylistCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.transparent,
-    child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          AspectRatio(
-            aspectRatio: 1,
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: cover == null
-                        ? isFavorites
-                              ? const _FavoritesPlaceholder()
-                              : const DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                      colors: [
-                                        MobiusColors.heroGradientTop,
-                                        MobiusColors.heroGradientBottom,
-                                      ],
-                                    ),
+  Widget build(BuildContext context) => GestureDetector(
+    behavior: HitTestBehavior.opaque,
+    onTap: onTap,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AspectRatio(
+          aspectRatio: 1,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: cover == null
+                      ? isFavorites
+                            ? const _FavoritesPlaceholder()
+                            : const DecoratedBox(
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      MobiusColors.heroGradientTop,
+                                      MobiusColors.heroGradientBottom,
+                                    ],
                                   ),
-                                  child: Center(
-                                    child: Icon(
-                                      Icons.queue_music_rounded,
-                                      color: Colors.white,
-                                      size: 56,
-                                    ),
+                                ),
+                                child: Center(
+                                  child: Icon(
+                                    Icons.queue_music_rounded,
+                                    color: Colors.white,
+                                    size: 56,
                                   ),
-                                )
-                        : Image.memory(cover!, fit: BoxFit.cover),
-                  ),
+                                ),
+                              )
+                      : Image.memory(cover!, fit: BoxFit.cover),
                 ),
-                if (!isFavorites)
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: Material(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      shape: const CircleBorder(),
-                      child: PopupMenuButton<String>(
-                        tooltip: 'Playlist options',
-                        onSelected: (value) {
-                          switch (value) {
-                            case 'edit':
-                              onEdit();
-                              break;
-                            case 'cover':
-                              onChooseCover();
-                              break;
-                            case 'delete':
-                              onDelete();
-                              break;
-                          }
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'edit', child: Text('Rename')),
-                          PopupMenuItem(
-                            value: 'cover',
-                            child: Text('Change cover image'),
-                          ),
-                          PopupMenuItem(
-                            value: 'delete',
-                            child: Text('Delete playlist'),
-                          ),
-                        ],
-                        icon: const Icon(Icons.more_horiz, color: Colors.white),
-                      ),
+              ),
+              if (!isFavorites)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Material(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    shape: const CircleBorder(),
+                    child: PopupMenuButton<String>(
+                      tooltip: 'Playlist options',
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'edit':
+                            onEdit();
+                            break;
+                          case 'cover':
+                            onChooseCover();
+                            break;
+                          case 'delete':
+                            onDelete();
+                            break;
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'edit', child: Text('Rename')),
+                        PopupMenuItem(
+                          value: 'cover',
+                          child: Text('Change cover image'),
+                        ),
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete playlist'),
+                        ),
+                      ],
+                      icon: const Icon(Icons.more_horiz, color: Colors.white),
                     ),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: MobiusColors.textOf(context),
-              fontWeight: FontWeight.w600,
-            ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: MobiusColors.textOf(context),
+            fontWeight: FontWeight.w600,
           ),
-          const SizedBox(height: 4),
-          Text(
-            '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
-            style: TextStyle(color: MobiusColors.textDimOf(context)),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '$trackCount ${trackCount == 1 ? 'track' : 'tracks'}',
+          style: TextStyle(color: MobiusColors.textDimOf(context)),
+        ),
+      ],
     ),
   );
 }
@@ -466,9 +528,7 @@ class _FavoritesPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
-    decoration: BoxDecoration(
-      color: MobiusColors.panelOf(context),
-    ),
+    decoration: BoxDecoration(color: MobiusColors.panelOf(context)),
     child: Center(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -503,6 +563,7 @@ class _PlaylistDetailPage extends StatefulWidget {
     required this.isFavorites,
     required this.onBack,
     required this.onChanged,
+    this.isCollapsed,
   });
 
   final String name;
@@ -516,6 +577,7 @@ class _PlaylistDetailPage extends StatefulWidget {
   final bool isFavorites;
   final VoidCallback onBack;
   final VoidCallback onChanged;
+  final ValueListenable<bool>? isCollapsed;
 
   @override
   State<_PlaylistDetailPage> createState() => _PlaylistDetailPageState();
@@ -523,16 +585,29 @@ class _PlaylistDetailPage extends StatefulWidget {
 
 class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
   final LruCache<int, ImageProvider?> _artworkCache = LruCache(64);
-  late final List<TrackMetadata> _tracks = widget.trackIds
-      .map((id) {
-        try {
-          return widget.repository.getTrackMetadata(id);
-        } catch (_) {
-          return null;
-        }
-      })
-      .whereType<TrackMetadata>()
-      .toList();
+  final List<TrackMetadata> _tracks = [];
+  bool _tracksLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadTracks());
+    });
+  }
+
+  Future<void> _loadTracks() => loadTrackMetadataInBatches(
+    repository: widget.repository,
+    trackIds: widget.trackIds,
+    isActive: () => mounted,
+    onBatch: (batch, isComplete) {
+      if (!mounted) return;
+      setState(() {
+        _tracks.addAll(batch);
+        _tracksLoaded = isComplete;
+      });
+    },
+  );
   Future<void> _remove(TrackMetadata track) async {
     if (widget.isFavorites) {
       await widget.collections.toggleFavorite(track.trackId);
@@ -552,7 +627,7 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
   }
 
   Future<void> _reorder(int oldIndex, int newIndex) async {
-    if (widget.isFavorites) return;
+    if (widget.isFavorites || !_tracksLoaded) return;
     if (newIndex > oldIndex) newIndex--;
     setState(() {
       final track = _tracks.removeAt(oldIndex);
@@ -565,11 +640,12 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
   }
 
   Future<void> _play(int index) async {
+    if (!_tracksLoaded) return;
     try {
-      widget.playerController.setQueue(
+      await widget.playerController.setQueueAndPlay(
         _tracks.map((track) => track.trackId).toList(),
+        index,
       );
-      await widget.playerController.selectAndPlay(index);
     } catch (error) {
       if (mounted) _showCollectionError(context, error);
     }
@@ -618,20 +694,131 @@ class _PlaylistDetailPageState extends State<_PlaylistDetailPage> {
     }
   }
 
+  Widget _buildMobileTrackList(int currentTrackId) {
+    if (!_tracksLoaded) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_tracks.isEmpty) {
+      return Center(
+        child: Text(
+          widget.isFavorites
+              ? 'Favorite a track from your library to see it here.'
+              : 'Add tracks from your library using the playlist menu.',
+          style: TextStyle(color: MobiusColors.textDimOf(context)),
+        ),
+      );
+    }
+    return ReorderableListView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 124),
+      itemCount: _tracks.length,
+      onReorder: (oldIndex, newIndex) {
+        if (_tracksLoaded) unawaited(_reorder(oldIndex, newIndex));
+      },
+      buildDefaultDragHandles: false,
+      itemBuilder: (context, index) {
+        final track = _tracks[index];
+        final isCurrent = track.trackId == currentTrackId;
+        return TrackContextMenu(
+          key: ValueKey('context-${track.trackId}'),
+          track: track,
+          repository: widget.repository,
+          collections: widget.collections,
+          playerController: widget.playerController,
+          removeLabel: widget.isFavorites
+              ? 'Remove from Favorites'
+              : 'Remove from playlist',
+          onRemove: () => _remove(track),
+          onChanged: widget.onChanged,
+          onGoToArtist: trackArtistName(track).isEmpty
+              ? null
+              : () => widget.onGoToArtist(trackArtistName(track)),
+          onGoToAlbum: track.album.trim().isEmpty
+              ? null
+              : () => widget.onGoToAlbum(track),
+          child: _PlaylistTrackRow(
+            key: ValueKey(track.trackId),
+            index: index,
+            track: track,
+            artwork: null,
+            mobileArtwork: GroupArtwork(
+              repository: widget.repository,
+              source: GroupArtworkSource([track.trackId]),
+              decodeSize: 88,
+              filterQuality: FilterQuality.medium,
+              placeholder: ColoredBox(
+                color: MobiusColors.panelOf(context),
+                child: Icon(
+                  Icons.music_note_rounded,
+                  color: MobiusColors.textDimOf(context),
+                  size: 20,
+                ),
+              ),
+            ),
+            isCurrent: isCurrent,
+            isReorderable: !widget.isFavorites && _tracksLoaded,
+            duration: _currentDuration(isCurrent),
+            sampleRate: _currentSampleRate(isCurrent),
+            onPlay: () => _play(index),
+            onMore: () => TrackContextMenu.showForTrack(
+              context: context,
+              position: Offset.zero,
+              track: track,
+              repository: widget.repository,
+              collections: widget.collections,
+              playerController: widget.playerController,
+              removeLabel: widget.isFavorites
+                  ? 'Remove from Favorites'
+                  : 'Remove from playlist',
+              onRemove: () => _remove(track),
+              onChanged: widget.onChanged,
+              onGoToArtist: trackArtistName(track).isEmpty
+                  ? null
+                  : () => widget.onGoToArtist(trackArtistName(track)),
+              onGoToAlbum: track.album.trim().isEmpty
+                  ? null
+                  : () => widget.onGoToAlbum(track),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     final currentTrackId = _safeCurrentTrackId;
 
+    if (isMobile) {
+      return MobileDetailPage(
+        kind: widget.isFavorites ? 'Saved Music' : 'Playlist',
+        title: widget.name,
+        subtitle:
+            '${widget.trackIds.length} ${widget.trackIds.length == 1 ? 'song' : 'songs'}',
+        trackCount: widget.trackIds.length,
+        artwork: _PlaylistCover(
+          cover: widget.cover,
+          size: 110,
+          isFavorites: widget.isFavorites,
+        ),
+        isCollapsed: widget.isCollapsed,
+        onPlay: !_tracksLoaded || _tracks.isEmpty ? null : () => _play(0),
+        trackListBuilder: (_) => _buildMobileTrackList(currentTrackId),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _PlaylistHero(
-          name: widget.name,
-          trackCount: _tracks.length,
-          cover: widget.cover,
-          onBack: widget.onBack,
-          isFavorites: widget.isFavorites,
+        CollapsibleDetailHeader(
+          isCollapsed: widget.isCollapsed,
+          child: _PlaylistHero(
+            name: widget.name,
+            trackCount: widget.trackIds.length,
+            cover: widget.cover,
+            onBack: widget.onBack,
+            isFavorites: widget.isFavorites,
+          ),
         ),
         Padding(
           padding: EdgeInsets.fromLTRB(
@@ -877,7 +1064,9 @@ class _PlaylistHero extends StatelessWidget {
                       const SizedBox(height: 14),
                       Text(
                         'Mobius  •  $trackCount ${trackCount == 1 ? 'song' : 'songs'}',
-                        style: TextStyle(color: MobiusColors.textDimOf(context)),
+                        style: TextStyle(
+                          color: MobiusColors.textDimOf(context),
+                        ),
                       ),
                     ],
                   ),
@@ -920,14 +1109,14 @@ class _PlaylistCover extends StatelessWidget {
     clipBehavior: Clip.antiAlias,
     child: cover == null
         ? (isFavorites
-            ? const _FavoritesPlaceholder()
-            : Center(
-                child: Icon(
-                  Icons.queue_music_rounded,
-                  color: MobiusColors.textDimOf(context),
-                  size: size * 0.45,
-                ),
-              ))
+              ? const _FavoritesPlaceholder()
+              : Center(
+                  child: Icon(
+                    Icons.queue_music_rounded,
+                    color: MobiusColors.textDimOf(context),
+                    size: size * 0.45,
+                  ),
+                ))
         : Image.memory(cover!, fit: BoxFit.cover),
   );
 }
@@ -972,6 +1161,7 @@ class _PlaylistTrackRow extends StatelessWidget {
     required this.index,
     required this.track,
     required this.artwork,
+    this.mobileArtwork,
     required this.isCurrent,
     required this.isReorderable,
     required this.duration,
@@ -983,6 +1173,7 @@ class _PlaylistTrackRow extends StatelessWidget {
   final int index;
   final TrackMetadata track;
   final ImageProvider? artwork;
+  final Widget? mobileArtwork;
   final bool isCurrent;
   final bool isReorderable;
   final double? duration;
@@ -994,100 +1185,38 @@ class _PlaylistTrackRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     if (isMobile) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 2),
-        child: Material(
-          color: isCurrent ? MobiusColors.panelOf(context) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          child: InkWell(
-            onTap: onPlay,
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              height: 60,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
-                  children: [
-                    if (isReorderable)
-                      ReorderableDragStartListener(
-                        index: index,
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Icon(
-                            Icons.drag_handle_rounded,
-                            size: 18,
-                            color: MobiusColors.textDimOf(context),
-                          ),
-                        ),
-                      ),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: SizedBox(
-                        width: 44,
-                        height: 44,
-                        child: artwork == null
-                            ? ColoredBox(
-                                color: MobiusColors.panelOf(context),
-                                child: Icon(
-                                  Icons.music_note_rounded,
-                                  color: MobiusColors.textDimOf(context),
-                                  size: 20,
-                                ),
-                              )
-                            : Image(
-                                image: artwork!,
-                                fit: BoxFit.cover,
-                                gaplessPlayback: true,
-                              ),
-                      ),
+      return MobileDetailTrackRow(
+        title: track.title,
+        subtitle: track.artist,
+        artwork:
+            mobileArtwork ??
+            (artwork == null
+                ? ColoredBox(
+                    color: MobiusColors.panelOf(context),
+                    child: Icon(
+                      Icons.music_note_rounded,
+                      color: MobiusColors.textDimOf(context),
+                      size: 20,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            track.title.trim().isEmpty ? 'Unknown title' : track.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: isCurrent
-                                  ? MobiusColors.accentOf(context)
-                                  : MobiusColors.textOf(context),
-                              fontSize: 14,
-                              fontWeight: isCurrent ? FontWeight.w600 : FontWeight.w400,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            track.artist.trim().isEmpty ? 'Unknown artist' : track.artist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: MobiusColors.textDimOf(context),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (onMore != null)
-                      IconButton(
-                        icon: Icon(
-                          Icons.more_vert_rounded,
-                          size: 18,
-                          color: MobiusColors.textDimOf(context),
-                        ),
-                        onPressed: onMore,
-                        splashRadius: 18,
-                      ),
-                  ],
+                  )
+                : Image(
+                    image: artwork!,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                  )),
+        isCurrent: isCurrent,
+        onPlay: onPlay,
+        onMore: onMore,
+        leading: isReorderable
+            ? ReorderableDragStartListener(
+                index: index,
+                child: Icon(
+                  Icons.drag_handle_rounded,
+                  size: 18,
+                  color: MobiusColors.textDimOf(context),
                 ),
-              ),
-            ),
-          ),
-        ),
+              )
+            : null,
       );
     }
 

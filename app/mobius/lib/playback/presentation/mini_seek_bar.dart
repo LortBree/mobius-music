@@ -119,7 +119,7 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
     final colors = MobiusSurfaces.of(context);
 
     return SizedBox(
-      height: 42,
+      height: 24,
       child: Row(
         children: [
           SizedBox(
@@ -133,7 +133,7 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -163,11 +163,11 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
                       if (showTooltip)
                         Positioned(
                           left: tooltipLeft,
-                          top: -14,
+                          top: -30,
                           child: IgnorePointer(
                             child: Container(
                               width: tooltipWidth,
-                              height: 28,
+                              height: 26,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
                                 color: colors.border,
@@ -185,10 +185,7 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
                             ),
                           ),
                         ),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        top: 7,
+                      Positioned.fill(
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onHorizontalDragStart: (details) =>
@@ -205,14 +202,11 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
                             widget.onChanged(value);
                             widget.onChangeEnd(value);
                           },
-                          child: SizedBox(
-                            height: 28,
-                            child: CustomPaint(
-                              painter: _MiniSeekBarPainter(
-                                fraction: fraction,
-                                trackColor: colors.border,
-                                activeColor: colors.accent,
-                              ),
+                          child: CustomPaint(
+                            painter: _MiniSeekBarPainter(
+                              fraction: fraction,
+                              trackColor: colors.border,
+                              activeColor: colors.accent,
                             ),
                           ),
                         ),
@@ -220,7 +214,7 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
                       if (widget.enabled)
                         Positioned(
                           left: (fraction * width - 5).clamp(0.0, width - 10),
-                          top: 16,
+                          top: 7,
                           child: const IgnorePointer(child: _SeekBarThumb()),
                         ),
                     ],
@@ -229,7 +223,7 @@ class _MiniSeekBarState extends State<MiniSeekBar> {
               },
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           SizedBox(
             width: 38,
             child: Text(

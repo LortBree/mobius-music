@@ -19,7 +19,7 @@ use offline_player_platform_macos::{
 };
 
 use crate::{
-    output_policy::OutputPolicy, OutputPlan, PlaybackError, PlaybackOutputMode, PlaybackState,
+    OutputPlan, PlaybackError, PlaybackOutputMode, PlaybackState,
     SignalPathSnapshot, EQUALIZER_ACTIVE_EPSILON_DB, EQUALIZER_BAND_COUNT,
 };
 

@@ -144,7 +144,9 @@ mod android {
     const AAUDIO_SHARING_MODE_SHARED: AaudioSharingMode = 0;
 
     // aaudio_performance_mode_t
+    #[allow(dead_code)]
     const AAUDIO_PERFORMANCE_MODE_NONE: AaudioPerformanceMode = 10;
+    const AAUDIO_PERFORMANCE_MODE_LOW_LATENCY: AaudioPerformanceMode = 12;
 
     // aaudio_usage_t
     const AAUDIO_USAGE_MEDIA: AaudioUsage = 1;
@@ -565,7 +567,7 @@ mod android {
                 AAudioStreamBuilder_setSampleRate(b, requested_sample_rate as i32);
                 AAudioStreamBuilder_setChannelCount(b, src_ch as i32);
                 AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
-                AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_NONE);
+                AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
                 AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_MEDIA);
                 AAudioStreamBuilder_setContentType(b, AAUDIO_CONTENT_TYPE_MUSIC);
                 AAudioStreamBuilder_setDataCallback(b, data_callback, user_data);

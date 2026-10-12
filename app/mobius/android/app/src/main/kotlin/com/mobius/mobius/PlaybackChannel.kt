@@ -126,22 +126,26 @@ class PlaybackChannel(
         // Reflect the paused state so media3 demotes the notification to a
         // dismissable one; do NOT stop the service, so a quick resume is cheap
         // and background playback is never killed mid-stream.
+        PlaybackHolder.updateWakeLock?.invoke(false)
         PlaybackHolder.player?.pausePreservingSnapshot()
         result.success(true)
     }
 
     private fun update(call: MethodCall, result: MethodChannel.Result) {
         val facade = ensureFacade()
+        val isPlaying = call.argument<Boolean>("isPlaying") ?: false
         facade.applyUpdate(
             call.argument<String>("title") ?: "",
             call.argument<String>("artist") ?: "",
             call.argument<String>("album") ?: "",
             (call.argument<Number>("durationMs"))?.toLong() ?: 0L,
             (call.argument<Number>("positionMs"))?.toLong() ?: 0L,
-            call.argument<Boolean>("isPlaying") ?: false,
+            isPlaying,
             call.argument<String>("artworkPath"),
             call.argument<ByteArray>("artworkData"),
         )
+        // Manage background wake lock to prevent CPU Doze during playback
+        PlaybackHolder.updateWakeLock?.invoke(isPlaying)
         // Start foreground service when playing
         if (armed && facade.hasTrack && facade.isPlaying) {
             startServiceNow()

@@ -3,6 +3,10 @@ import 'package:flutter/material.dart';
 import '../../../app/theme/colors.dart';
 import '../../../app/player_shell_state.dart' show kMobileBreakpoint;
 
+/// Shared fill for the currently playing track across mobile track lists.
+Color currentTrackRowColor(BuildContext context) =>
+    MobiusColors.accentOf(context).withValues(alpha: 0.20);
+
 /// A single row in an album/artist detail tracklist.
 ///
 /// Columns: a leading slot (track number, or a play icon on hover, or an
@@ -52,7 +56,9 @@ class _TrackListRowState extends State<TrackListRow> {
   bool _hovered = false;
 
   Color _rowColor(BuildContext context) {
-    if (widget.isCurrent) return MobiusColors.selectionOf(context);
+    if (widget.isCurrent) {
+      return currentTrackRowColor(context);
+    }
     if (_hovered) return MobiusColors.panelOf(context);
     return Colors.transparent;
   }
@@ -161,12 +167,10 @@ class _TrackListRowState extends State<TrackListRow> {
   Widget _buildLeading(BuildContext context, Color accent, bool isMobile) {
     // Playing: accent equalizer glyph, regardless of hover.
     if (widget.isCurrent) {
-      // On mobile, the active row shows a play affordance (no hover exists);
-      // on desktop it keeps the equalizer glyph.
       if (isMobile) {
         return Icon(
-          Icons.play_arrow_rounded,
-          size: 20,
+          Icons.graphic_eq_rounded,
+          size: 18,
           color: MobiusColors.accentLightOf(context),
         );
       }

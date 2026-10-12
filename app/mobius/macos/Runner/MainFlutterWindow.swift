@@ -1,5 +1,6 @@
 import Cocoa
 import FlutterMacOS
+import CoreAudio
 
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private let minimumWindowSize = NSSize(
@@ -58,6 +59,14 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     )
 
     registerPlaybackActivityChannel(
+      with: flutterViewController
+    )
+
+    registerShareChannel(
+      with: flutterViewController
+    )
+
+    registerAudioRouteChannel(
       with: flutterViewController
     )
 
@@ -415,5 +424,154 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
 
     return minimumWindowSize.height -
         contentRect.height
+  }
+
+  private func registerShareChannel(
+    with flutterViewController: FlutterViewController
+  ) {
+    let channel = FlutterMethodChannel(
+      name: "mobius/share",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else {
+        result(FlutterError(code: "UNAVAILABLE", message: "Window unavailable", details: nil))
+        return
+      }
+
+      switch call.method {
+      case "shareImage":
+        guard
+          let args = call.arguments as? [String: Any],
+          let typedData = args["bytes"] as? FlutterStandardTypedData
+        else {
+          result(FlutterError(code: "INVALID_ARGUMENT", message: "Bytes required", details: nil))
+          return
+        }
+
+        guard let image = NSImage(data: typedData.data) else {
+          result(FlutterError(code: "DECODE_FAILED", message: "Failed to decode image", details: nil))
+          return
+        }
+
+        let picker = NSSharingServicePicker(items: [image])
+        if let contentView = self.contentView {
+          let rect = NSRect(x: contentView.bounds.midX, y: contentView.bounds.midY, width: 1, height: 1)
+          picker.show(relativeTo: rect, of: contentView, preferredEdge: .minY)
+          result(true)
+        } else {
+          result(false)
+        }
+
+      case "saveImage":
+        guard
+          let args = call.arguments as? [String: Any],
+          let typedData = args["bytes"] as? FlutterStandardTypedData,
+          let fileName = args["fileName"] as? String
+        else {
+          result(FlutterError(code: "INVALID_ARGUMENT", message: "Bytes and fileName required", details: nil))
+          return
+        }
+
+        do {
+          let picturesURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first!
+          let mobiusDir = picturesURL.appendingPathComponent("Mobius")
+          if !FileManager.default.fileExists(atPath: mobiusDir.path) {
+            try FileManager.default.createDirectory(at: mobiusDir, withIntermediateDirectories: true, attributes: nil)
+          }
+          let fileURL = mobiusDir.appendingPathComponent(fileName)
+          try typedData.data.write(to: fileURL)
+          result(true)
+        } catch {
+          result(FlutterError(code: "SAVE_ERROR", message: error.localizedDescription, details: nil))
+        }
+
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func registerAudioRouteChannel(
+    with flutterViewController: FlutterViewController
+  ) {
+    let channel = FlutterMethodChannel(
+      name: "mobius/audio_route",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard let self = self else {
+        result(FlutterError(code: "UNAVAILABLE", message: "Window unavailable", details: nil))
+        return
+      }
+
+      switch call.method {
+      case "current":
+        let routeInfo = self.queryCoreAudioDefaultOutputRoute()
+        result(routeInfo)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func queryCoreAudioDefaultOutputRoute() -> [String: String] {
+    var deviceID: AudioObjectID = 0
+    var propertySize = UInt32(MemoryLayout<AudioObjectID>.size)
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+
+    let status = AudioObjectGetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      0,
+      nil,
+      &propertySize,
+      &deviceID
+    )
+
+    guard status == noErr, deviceID != 0 else {
+      return ["type": "unknown", "name": "Default Audio"]
+    }
+
+    var name: CFString = "" as CFString
+    var nameSize = UInt32(MemoryLayout<CFString>.size)
+    var nameAddress = AudioObjectPropertyAddress(
+      mSelector: kAudioObjectPropertyName,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+
+    let nameStatus = AudioObjectGetPropertyData(
+      deviceID,
+      &nameAddress,
+      0,
+      nil,
+      &nameSize,
+      &name
+    )
+
+    let deviceName = (nameStatus == noErr) ? (name as String) : "Audio Device"
+    let lower = deviceName.lowercased()
+
+    let type: String
+    if lower.contains("usb") || lower.contains("dac") || lower.contains("fiio") || lower.contains("topping") || lower.contains("audioengine") {
+      type = "usb"
+    } else if lower.contains("airpods") || lower.contains("bluetooth") || lower.contains("wireless") || lower.contains("bt") {
+      type = "bluetooth"
+    } else if lower.contains("headphone") || lower.contains("external") {
+      type = "wired"
+    } else if lower.contains("speaker") || lower.contains("built-in") {
+      type = "speaker"
+    } else {
+      type = "wired"
+    }
+
+    return ["type": type, "name": deviceName]
   }
 }

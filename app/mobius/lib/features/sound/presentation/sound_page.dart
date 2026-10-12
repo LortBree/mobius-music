@@ -199,7 +199,7 @@ class _SoundPageState extends State<SoundPage> {
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < kMobileBreakpoint;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(isMobile ? 16 : 32, 12, isMobile ? 16 : 36, 24),
+      padding: EdgeInsets.fromLTRB(isMobile ? 16 : 32, 12, isMobile ? 16 : 36, isMobile ? 90 : 124),
       child: Align(
         alignment: Alignment.topLeft,
         child: ConstrainedBox(
